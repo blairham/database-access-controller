@@ -22,53 +22,6 @@ import (
 //	docker run --rm -d -p 5433:5432 -e POSTGRES_PASSWORD=test --name pgtest postgres:16-alpine
 //	PGTEST_DSN='postgres://postgres:test@127.0.0.1:5433/postgres' go test -tags integration ./internal/engine/postgres/
 
-type pgxConn struct{ c *pgx.Conn }
-
-func (p pgxConn) Exec(ctx context.Context, sql string, args ...any) error {
-	_, err := p.c.Exec(ctx, sql, args...)
-	return err
-}
-
-func (p pgxConn) SchemaExists(ctx context.Context, schema string) (bool, error) {
-	var b bool
-	err := p.c.QueryRow(ctx, QuerySchemaExists, schema).Scan(&b)
-	return b, err
-}
-
-func (p pgxConn) ObjectOwners(ctx context.Context, schema string) ([]string, error) {
-	rows, err := p.c.Query(ctx, QueryObjectOwners, schema)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
-			return nil, err
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
-}
-
-func (p pgxConn) RelationsNotOwnedBy(ctx context.Context, schema, owner string) ([]Relation, error) {
-	rows, err := p.c.Query(ctx, QueryRelationsNotOwnedBy, schema, owner)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Relation
-	for rows.Next() {
-		var r Relation
-		if err := rows.Scan(&r.Name, &r.Kind, &r.Owner); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 func connect(t *testing.T) pgxConn {
 	t.Helper()
 	dsn := os.Getenv("PGTEST_DSN")
@@ -289,5 +242,106 @@ func TestSequenceGrantAcceptsTheSplitPrivileges(t *testing.T) {
 		if strings.Contains(d, "ON ALL SEQUENCES") && strings.Contains(d, "INSERT") {
 			t.Errorf("INSERT reached the sequence grant: %s", d)
 		}
+	}
+}
+
+// A serial or identity sequence is auto-dependent on its table's column, and
+// PostgreSQL refuses to change its owner independently:
+//
+//	ERROR: cannot change owner of sequence "events_id_seq" (SQLSTATE 0A000)
+//
+// Its owner follows the table's, so reassigning the table is both necessary
+// and sufficient; emitting the ALTER at all is an error rather than merely
+// redundant. This was a live bug, found by diffing against the Job this engine
+// replaces -- that implementation never hit it because it reassigned tables
+// first and its sequence loop then found nothing left to do.
+func TestOwnedSequencesAreNotReassigned(t *testing.T) {
+	ctx := context.Background()
+	c := connect(t)
+	seed(t, c, "itest5", "itest5_app")
+	t.Cleanup(func() {
+		_ = c.Exec(ctx, `DROP SCHEMA IF EXISTS itest5 CASCADE`)
+		dropRole(t, c, "itest5_app")
+	})
+
+	e := New(c, c, nil)
+	p, err := e.BuildPlan(ctx, engine.Access{
+		Database:  "postgres",
+		Principal: "itest5_app",
+		Namespaces: []engine.Namespace{
+			{Name: "itest5", Privileges: []string{"SELECT", "INSERT"}, Owner: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	for _, s := range p.Steps() {
+		if strings.Contains(s.Describe(), `ALTER SEQUENCE "itest5"."fixtures_id_seq"`) {
+			t.Errorf("plan reassigns a column-owned sequence, which PostgreSQL rejects outright: %s", s.Describe())
+		}
+	}
+
+	if _, err := p.Apply(ctx); err != nil {
+		t.Fatalf("applying: %v\n\nplan:\n%s", err, p.Describe())
+	}
+
+	// The sequence still ends up correctly owned -- it followed its table.
+	var owner string
+	if err := c.c.QueryRow(ctx, `
+		SELECT pg_get_userbyid(c.relowner)
+		  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'itest5' AND c.relname = 'fixtures_id_seq'`).Scan(&owner); err != nil {
+		t.Fatalf("reading sequence owner: %v", err)
+	}
+	if owner != "itest5_app" {
+		t.Errorf("fixtures_id_seq is owned by %q, want itest5_app via its table", owner)
+	}
+}
+
+// Tables must be planned before sequences, so a standalone sequence is never
+// attempted ahead of the table whose reassignment would have settled it.
+func TestOwnershipPlansTablesBeforeSequences(t *testing.T) {
+	ctx := context.Background()
+	c := connect(t)
+	seed(t, c, "itest6", "itest6_app")
+	t.Cleanup(func() {
+		_ = c.Exec(ctx, `DROP SCHEMA IF EXISTS itest6 CASCADE`)
+		dropRole(t, c, "itest6_app")
+	})
+
+	// A sequence with no owning column, so it is genuinely reassignable.
+	if err := c.Exec(ctx, `CREATE SEQUENCE itest6.standalone_seq`); err != nil {
+		t.Fatalf("creating standalone sequence: %v", err)
+	}
+
+	e := New(c, c, nil)
+	p, err := e.BuildPlan(ctx, engine.Access{
+		Database:  "postgres",
+		Principal: "itest6_app",
+		Namespaces: []engine.Namespace{
+			{Name: "itest6", Privileges: []string{"SELECT"}, Owner: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	firstTable, firstSequence := -1, -1
+	for i, s := range p.Steps() {
+		d := s.Describe()
+		if firstTable < 0 && strings.HasPrefix(d, "ALTER TABLE ") {
+			firstTable = i
+		}
+		if firstSequence < 0 && strings.HasPrefix(d, "ALTER SEQUENCE ") {
+			firstSequence = i
+		}
+	}
+	if firstTable >= 0 && firstSequence >= 0 && firstSequence < firstTable {
+		t.Errorf("a sequence is reassigned at step %d, before the first table at step %d", firstSequence, firstTable)
+	}
+
+	if _, err := p.Apply(ctx); err != nil {
+		t.Fatalf("applying: %v\n\nplan:\n%s", err, p.Describe())
 	}
 }

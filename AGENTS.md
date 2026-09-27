@@ -19,6 +19,7 @@ needs inside an RDS or Aurora database.
 make check              # fmt, vet, unit tests -- what CI runs
 make test               # unit tests, no database needed
 make test-integration   # runs generated SQL against a real PostgreSQL 16
+make test-equivalence   # diffs this engine against the provisioner it replaces
 make generate           # deepcopy, CRDs, RBAC (after editing apis/)
 make build              # bin/manager, bin/dbctl
 make pg-down            # stop the test database
@@ -91,6 +92,13 @@ Unit tests need nothing. Integration tests need a database and are behind the
 `integration` tag so `make test` stays fast and hermetic. Every bug fixed in
 plan construction gets a unit test; every bug about what the *server* accepts
 gets an integration test.
+
+There is a third suite behind the `equivalence` tag. It runs a rendered script
+from whatever implementation is being replaced and this engine against the same
+seed, then diffs the resulting ownership, ACLs and default privileges. Use it
+before cutting a database over. It has already earned its keep once: the
+column-owned sequence rule was found this way and no unit test would have
+caught it.
 
 ## Documentation
 

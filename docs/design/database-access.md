@@ -140,6 +140,45 @@ owned by someone else, and a view among the tables.
 make test-integration
 ```
 
+### Differential testing against the implementation being replaced
+
+Unit and integration tests prove the engine is correct on its own terms. They
+cannot prove it is a *drop-in* for the script it replaces, and that is the
+question that matters when cutting over a database that already has state.
+
+`equivalence_test.go` answers it by running both implementations against the
+same seed and diffing the resulting state -- object ownership, schema and
+relation ACLs, and `pg_default_acl` entries. Comparing the two SQL texts would
+not work: the older implementation runs server-side `DO` blocks that loop over
+`pg_class` at execution time, while this one reads first and emits concrete
+statements, so the texts are expected to differ. Only the end state has to
+match.
+
+```sh
+make test-equivalence JOB_SCRIPT=/path/to/rendered-script.sh EQ_SCHEMA=app EQ_ROLE=app_role
+```
+
+**This is how the column-owned sequence bug was found.** A serial or identity
+sequence is auto-dependent on its table's column, and PostgreSQL refuses to
+change its owner independently:
+
+```
+ERROR: cannot change owner of sequence "events_id_seq" (SQLSTATE 0A000)
+DETAIL: Sequence "events_id_seq" is linked to table "events".
+```
+
+Reassigning the table is both necessary and sufficient -- the sequence follows.
+Emitting the `ALTER SEQUENCE` is an error, not merely a redundant statement.
+The older implementation never hit it by construction: it reassigned tables
+first, from `pg_tables`, and its separate sequence loop then found nothing left
+to do. Planning everything from a single read loses that accident, so the query
+now excludes column-owned sequences outright (`pg_depend.deptype = 'a'`) and
+orders tables ahead of sequences.
+
+No unit test would have caught this. The statement is well-formed, the fake
+inspector happily returns the sequence, and the failure exists only in
+PostgreSQL's rules about what may own what.
+
 ## Not in scope
 
 Creating the RDS instance, the Aurora cluster or the DynamoDB table. Those are

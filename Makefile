@@ -53,3 +53,11 @@ check: fmt vet test ## What CI runs.
 .PHONY: help
 help:
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: test-equivalence
+test-equivalence: pg-up ## Diff this engine against the provisioner it replaces. Needs JOB_SCRIPT, EQ_SCHEMA, EQ_ROLE.
+	@test -n "$(JOB_SCRIPT)" || { echo "set JOB_SCRIPT to a rendered provisioner script"; exit 1; }
+	JOB_SCRIPT='$(JOB_SCRIPT)' JOB_SCRIPT_RO='$(JOB_SCRIPT_RO)' \
+	EQ_SCHEMA='$(EQ_SCHEMA)' EQ_ROLE='$(EQ_ROLE)' \
+	PGTEST_DSN='$(PGTEST_DSN)' PGTEST_CONTAINER=pgtest \
+	  $(GO) test -tags equivalence ./internal/engine/postgres/ -run Equivalence -v

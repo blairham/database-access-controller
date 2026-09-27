@@ -93,6 +93,21 @@ SELECT pg_get_userbyid(n.nspowner)
 	// requires ownership of it, so a migration doing DROP VIEW / CREATE OR
 	// REPLACE VIEW fails with "must be owner of view" while every table it
 	// reads was correctly reassigned.
+	//
+	// SEQUENCES OWNED BY A COLUMN ARE EXCLUDED. A serial or identity sequence
+	// is auto-dependent on its table's column (pg_depend.deptype = 'a'), and
+	// PostgreSQL refuses to change its owner independently:
+	//
+	//	ERROR: cannot change owner of sequence "events_id_seq" (SQLSTATE 0A000)
+	//	DETAIL: Sequence "events_id_seq" is linked to table "events".
+	//
+	// Its owner follows the table's, so reassigning the table is both
+	// necessary and sufficient. Emitting the ALTER at all is an error, not
+	// merely redundant.
+	//
+	// ORDER IS LOAD-BEARING for the same reason: tables come first, so a
+	// standalone sequence that a table's reassignment would have fixed is
+	// never attempted ahead of it.
 	QueryRelationsNotOwnedBy = `
 SELECT c.relname, c.relkind::text, pg_get_userbyid(c.relowner)
   FROM pg_class c
@@ -100,5 +115,22 @@ SELECT c.relname, c.relkind::text, pg_get_userbyid(c.relowner)
  WHERE n.nspname = $1
    AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
    AND pg_get_userbyid(c.relowner) <> $2
- ORDER BY c.relkind, c.relname`
+   AND NOT (
+     c.relkind = 'S'
+     AND EXISTS (
+       SELECT 1
+         FROM pg_depend d
+        WHERE d.classid = 'pg_class'::regclass
+          AND d.objid = c.oid
+          AND d.refclassid = 'pg_class'::regclass
+          AND d.deptype = 'a'
+     )
+   )
+ ORDER BY CASE c.relkind
+            WHEN 'r' THEN 0
+            WHEN 'p' THEN 0
+            WHEN 'S' THEN 1
+            ELSE 2
+          END,
+          c.relname`
 )
