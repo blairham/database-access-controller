@@ -19,6 +19,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -55,13 +56,25 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 	setupLog := ctrl.Log.WithName("setup")
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	options := ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         leaderElect,
 		LeaderElectionID:       "database-controller.io",
-	})
+	}
+
+	// Restricting the cache is what --watch-namespace has to do. Setting the
+	// flag without this leaves the manager watching every namespace while
+	// reporting that it is scoped to one, which is the kind of gap nothing
+	// surfaces until a resource somewhere unexpected gets reconciled.
+	if watchNS != "" {
+		options.Cache = cache.Options{
+			DefaultNamespaces: map[string]cache.Config{watchNS: {}},
+		}
+	}
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), options)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)

@@ -17,13 +17,18 @@
 # LOCAL, which is the default and almost always what you want:
 #
 #   k5s up -f k5s.yaml
-#   kubectl --context k5s/database-controller apply -k config/default
+#   helm --kube-context k5s/database-controller install dc charts/database-controller \
+#     --set replicaCount=1 --set image.repository=database-controller --set image.tag=dev \
+#     --set logEncoder=console
 #   kubectl --context k5s/database-controller apply -f examples/rig-databaseaccess.yaml
 #
-# k5s runs the services; it has no key for applying raw manifests, so the CRD,
-# RBAC and Deployment go on with kubectl afterwards. Nothing about that is
-# unusual -- they are ordinary cluster objects and kustomize already renders
-# them.
+# k5s runs the services and has no key for applying charts, so the release goes
+# on afterwards. replicaCount=1 because a single-node kind cluster has nothing
+# to spread a second replica onto, and console logging because you are reading
+# them in a terminal.
+#
+# NOTE the rig builds the controller image itself, so the release points at that
+# tag rather than a registry.
 #
 # ⚠ THE RIG USES PASSWORD AUTH, AND THAT IS THE POINT OF THE OPTION. A local
 # PostgreSQL has no IAM, so `auth.method: password` is the only way the

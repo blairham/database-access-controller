@@ -1,0 +1,142 @@
+# Default values for database-controller.
+#
+# Layout and naming follow the aws-load-balancer-controller chart, so anyone
+# who has configured that one finds the same keys in the same places.
+
+replicaCount: 2
+revisionHistoryLimit: 10
+
+image:
+  repository: ghcr.io/blairham/database-controller
+  # Defaults to the chart's appVersion when unset. Pin a digest or an immutable
+  # tag anywhere that matters -- a moving tag makes a rollout unreproducible.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+runtimeClassName: ""
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+autoscaling:
+  # Off, and it should stay off. Leader election means exactly one replica
+  # reconciles regardless of how many are running, so scaling out adds standbys
+  # rather than throughput. The key exists because the chart layout it follows
+  # has it.
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account.
+  #
+  # On EKS this is where a Pod Identity Association or an IRSA role annotation
+  # goes. The IAM role needs rds-db:connect on the admin user's dbuser ARN.
+  # Nothing in the controller references AWS directly -- the SDK picks the
+  # credentials up from the environment.
+  annotations: {}
+  # The name of the service account to use. Generated from the fullname
+  # template when unset and create is true.
+  name: ""
+
+rbac:
+  # Specifies whether rbac resources should be created
+  create: true
+
+crds:
+  # Install the DatabaseAccess CRD as part of this release.
+  #
+  # ⚠ THIS CHART PUTS THE CRD IN templates/, NOT IN crds/, and that is a
+  # deliberate departure from the chart it otherwise follows. Helm installs
+  # crds/ once and then never upgrades or deletes it, so a schema change -- a
+  # new field, a widened engine enum -- silently never reaches a cluster that
+  # already has the chart, and the fix is a manual kubectl apply that someone
+  # has to know to run. In templates/ the CRD upgrades with everything else.
+  install: true
+
+  # Keep the CRD when the release is uninstalled.
+  #
+  # Deleting a CRD deletes every DatabaseAccess with it, and each of those with
+  # revokeOnDelete set would run its revoke plan -- an uninstall that withdraws
+  # database access across the fleet. Leave this on.
+  keep: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+terminationGracePeriodSeconds: 10
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+priorityClassName: system-cluster-critical
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Spread replicas across nodes when affinity is not set explicitly. With two
+# replicas on one node a single eviction takes the standby with the leader.
+configureDefaultAffinity: true
+
+topologySpreadConstraints: []
+
+updateStrategy: {}
+  # type: RollingUpdate
+  # rollingUpdate:
+  #   maxSurge: 1
+  #   maxUnavailable: 1
+
+podDisruptionBudget: {}
+#  maxUnavailable: 1
+
+serviceAnnotations: {}
+deploymentAnnotations: {}
+podAnnotations: {}
+podLabels: {}
+additionalLabels: {}
+
+# Which controllers this manager runs. An unrecognized name is refused at
+# startup rather than silently running nothing.
+controllers:
+  - databaseaccess
+
+# Restrict the manager to one namespace. Empty watches all namespaces.
+watchNamespace: ""
+
+# Leader election. Leave on whenever replicas can exceed one, including during
+# a rollout: two managers reconciling one resource would race on the database.
+enableLeaderElection: true
+
+metrics:
+  service:
+    enabled: true
+    port: 8080
+  serviceMonitor:
+    # Requires the Prometheus operator CRDs.
+    enabled: false
+    interval: 30s
+    additionalLabels: {}
+
+# Log encoding: json for anything that ships logs, console for a local rig.
+logEncoder: json
+logLevel: info
+
+# Extra arguments appended to the manager's command line.
+extraArgs: []

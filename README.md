@@ -84,8 +84,15 @@ since there is no cluster to read a Secret from on a workstation.
 ## Running it in a cluster
 
 ```sh
-kubectl apply -k config/default    # CRD, RBAC, Deployment
+helm install database-controller charts/database-controller \
+  --namespace database-controller-system --create-namespace \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::<acct>:role/<role>
 ```
+
+The chart follows the `aws-load-balancer-controller` layout -- same value
+names, same file structure -- with one deliberate difference: the CRD lives in
+`templates/` rather than `crds/`, because Helm never upgrades `crds/`. See
+`charts/database-controller/README.md`.
 
 There is also a `k5s.yaml` lane that brings up PostgreSQL plus the controller
 built from source, for exercising the deployment itself -- the image starting,

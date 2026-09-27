@@ -1,0 +1,20 @@
+{{- if .Values.podDisruptionBudget }}
+{{/*
+⚠ A PDB on a single-replica Deployment is not protection, it is a wedge.
+maxUnavailable: 1 with replicas: 1 lets the only pod go; minAvailable: 1 with
+replicas: 1 blocks every voluntary eviction, so node drains hang. The chart
+defaults to two replicas, which is what makes a PDB meaningful here.
+*/}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "database-controller.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "database-controller.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "database-controller.selectorLabels" . | nindent 6 }}
+  {{- toYaml .Values.podDisruptionBudget | nindent 2 }}
+{{- end }}

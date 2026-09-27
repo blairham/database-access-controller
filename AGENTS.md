@@ -21,7 +21,9 @@ make test               # unit tests, no database needed
 make test-envtest       # controller against a real kube-apiserver, no cluster
 make test-integration   # runs generated SQL against a real PostgreSQL 16
 make test-equivalence   # diffs this engine against the provisioner it replaces
-make generate           # deepcopy, CRDs, RBAC (after editing apis/)
+make generate           # deepcopy, CRDs, RBAC + sync them into the chart
+make helm-lint          # lint and render the chart with the toggles flipped
+make check-generated    # fail if the generated files are stale
 make build              # bin/manager, bin/dbctl
 make pg-down            # stop the test database
 ```
@@ -38,6 +40,7 @@ internal/controller/             reconcilers
 cmd/manager/                     one binary; --controllers selects which run
 cmd/dbctl/              plan and apply from a terminal
 config/crd/, config/rbac/        generated manifests -- never hand-edit
+charts/database-controller/      the Helm chart; the install path
 docs/design/                     why the design is shaped this way
 ```
 
@@ -48,8 +51,12 @@ docs/design/                     why the design is shaped this way
   because of a specific production failure. When you touch such a line, keep the
   comment and the test that pins it, or explain in the PR why the failure can no
   longer happen.
-- **Never hand-edit generated files.** `zz_generated.deepcopy.go`, `config/crd/`
-  and `config/rbac/` come from `make generate`.
+- **Never hand-edit generated files.** `zz_generated.deepcopy.go`, `config/crd/`,
+  `config/rbac/`, and the chart's `templates/crds.yaml` and `templates/rbac.yaml`
+  all come from `make generate`. The chart's two are copied from `config/` by
+  `hack/sync-chart.sh`: writing either by hand means the chart drifts from what
+  the controller actually needs, and that failure shows up as a permission error
+  at runtime rather than anything review would catch.
 - Identifiers reaching SQL go through `ValidateIdent` then `QuoteIdent`.
   PostgreSQL does not accept a parameter where an identifier is required, so
   this is the only thing standing between a CRD field and injected SQL.

@@ -1,0 +1,51 @@
+{{ .Chart.Name }} {{ .Chart.AppVersion }} is installed as {{ include "database-controller.fullname" . }}.
+
+Watching: {{ if .Values.watchNamespace }}namespace {{ .Values.watchNamespace }}{{ else }}all namespaces{{ end }}
+Replicas: {{ .Values.replicaCount }}{{ if .Values.enableLeaderElection }} (leader-elected){{ end }}
+
+{{- if not .Values.crds.install }}
+
+⚠ crds.install is false. The DatabaseAccess CRD must already exist, or every
+  reconcile fails with "no matches for kind".
+{{- end }}
+
+{{- if .Values.serviceAccount.create }}
+{{- if not .Values.serviceAccount.annotations }}
+
+⚠ NO ANNOTATIONS ON THE SERVICE ACCOUNT. The default admin auth is an RDS IAM
+  token, minted from whatever AWS credentials the pod has. On EKS that comes
+  from a Pod Identity Association or an IRSA role annotation on
+  {{ include "database-controller.serviceAccountName" . }}, and the role needs
+  rds-db:connect on the admin user's dbuser ARN.
+
+  Without it, connections fail at reconcile time rather than at install, and
+  the error lands on the DatabaseAccess rather than here. Either set
+  serviceAccount.annotations, or use auth.method: password per resource.
+{{- end }}
+{{- end }}
+
+Create access for a service:
+
+  apiVersion: database-controller.io/v1alpha1
+  kind: DatabaseAccess
+  metadata:
+    name: my-service
+    namespace: {{ .Release.Namespace }}
+  spec:
+    instance:
+      endpoint: <rds-endpoint>
+      database: appdb
+      region: <region>
+    role: my_service_app
+    grants:
+      - schema: my_service
+        privileges: [SELECT, INSERT, UPDATE, DELETE]
+        ownerOf: true
+
+Then watch it settle:
+
+  kubectl get databaseaccess -n {{ .Release.Namespace }} -w
+
+Status carries what was applied, and status.warnings carries the statements
+that were skipped -- those are the difference between access being granted and
+access surviving the next migration.
