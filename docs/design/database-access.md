@@ -125,6 +125,41 @@ So it is a warning. But the warning reaches the resource rather than a pod log,
 because it is the difference between "access was granted" and "access was
 granted and will survive the next migration".
 
+## Idempotency
+
+Every statement is safe to re-run, and the plan converges:
+
+- `CREATE ROLE` is omitted when the role exists, and still tolerates a
+  concurrent create.
+- `CREATE SCHEMA` is emitted only when the schema is absent.
+- `GRANT` and `ALTER DEFAULT PRIVILEGES` are upserts.
+- Ownership `ALTER`s are emitted only for relations the principal does not
+  already own, and never for column-owned sequences.
+
+Measured on a rig: after the first apply, the plan hash and statement count are
+identical on every subsequent reconcile and never grow.
+
+**It is not a no-op, and that is deliberate.** The plan is re-applied on every
+reconcile rather than skipped when nothing appears to have changed.
+
+The obvious optimization is to compare the new plan's hash against
+`status.appliedPlanHash` and do nothing when they match. **That would silently
+break drift repair.** The plan is built from what the engine reads — role
+existence, schema existence, object owners — and it does not read current
+grants. A privilege revoked by hand therefore produces a byte-identical plan
+with an identical hash. Measured on a rig: revoking `USAGE` left the hash at
+`79faccfc19bb167b`, and re-applying restored the grant. A hash-based skip would
+have left it revoked, forever, while reporting Ready.
+
+Re-issuing grants is cheap and `GRANT` is an upsert. Skipping is not.
+`TestReapplyRepairsARevokedGrant` pins this, and fails loudly if the hash ever
+does become a reliable drift signal — at which point the tradeoff is worth
+revisiting.
+
+The hash remains useful as an *observation* in status: it answers "did the
+desired shape change", which is a different question from "is the database
+still in that shape".
+
 ## Deletion
 
 `spec.revokeOnDelete` defaults to false, and the finalizer is added only when it

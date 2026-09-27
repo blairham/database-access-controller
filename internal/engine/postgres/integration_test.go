@@ -345,3 +345,91 @@ func TestOwnershipPlansTablesBeforeSequences(t *testing.T) {
 		t.Fatalf("applying: %v\n\nplan:\n%s", err, p.Describe())
 	}
 }
+
+// Re-applying must REPAIR a revoked grant, and this is why the plan is applied
+// on every reconcile rather than skipped when nothing appears to have changed.
+//
+// ⚠ DO NOT "OPTIMIZE" THIS BY COMPARING status.appliedPlanHash AND SKIPPING.
+// The plan is built from what the engine reads -- role existence, schema
+// existence, object owners -- and it does not read current grants. A revoked
+// privilege therefore produces a BYTE-IDENTICAL plan with an identical hash.
+// Measured on a rig: revoking USAGE left the hash at 79faccfc19bb167b, so a
+// hash-based skip would have silently stopped repairing the most common drift
+// there is.
+//
+// Re-issuing grants is cheap and GRANT is an upsert. Skipping is not.
+func TestReapplyRepairsARevokedGrant(t *testing.T) {
+	ctx := context.Background()
+	c := connect(t)
+	seed(t, c, "itest7", "itest7_app")
+	t.Cleanup(func() {
+		_ = c.Exec(ctx, `DROP SCHEMA IF EXISTS itest7 CASCADE`)
+		dropRole(t, c, "itest7_reader")
+		dropRole(t, c, "itest7_app")
+	})
+
+	e := New(c, c, nil)
+	access := engine.Access{
+		Database:   "postgres",
+		Principal:  "itest7_reader",
+		Namespaces: []engine.Namespace{{Name: "itest7", Privileges: []string{"SELECT"}}},
+	}
+
+	first, err := e.BuildPlan(ctx, access)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if _, err := first.Apply(ctx); err != nil {
+		t.Fatalf("applying: %v", err)
+	}
+
+	// The BASELINE is the plan once the role exists, not the first plan. The
+	// first one carries CREATE ROLE and the next one does not, so comparing
+	// against it would show a hash change that has nothing to do with the
+	// revoke under test.
+	settled, err := e.BuildPlan(ctx, access)
+	if err != nil {
+		t.Fatalf("re-planning after the role exists: %v", err)
+	}
+
+	hasUsage := func() bool {
+		t.Helper()
+		var ok bool
+		if err := c.c.QueryRow(ctx,
+			`SELECT has_schema_privilege('itest7_reader', 'itest7', 'USAGE')`).Scan(&ok); err != nil {
+			t.Fatalf("checking privilege: %v", err)
+		}
+		return ok
+	}
+
+	if !hasUsage() {
+		t.Fatal("USAGE was not granted by the first apply")
+	}
+
+	// Drift, the way it actually happens: someone revokes by hand.
+	if err := c.Exec(ctx, `REVOKE USAGE ON SCHEMA itest7 FROM itest7_reader`); err != nil {
+		t.Fatalf("revoking: %v", err)
+	}
+	if hasUsage() {
+		t.Fatal("the revoke did not take effect")
+	}
+
+	second, err := e.BuildPlan(ctx, access)
+	if err != nil {
+		t.Fatalf("re-planning: %v", err)
+	}
+
+	// The hash is the same, which is the whole point of the warning above.
+	if settled.Hash() != second.Hash() {
+		t.Errorf("plan hash changed after a revoke (%s -> %s); if this is now a "+
+			"reliable drift signal the comment above can be revisited",
+			settled.Hash(), second.Hash())
+	}
+
+	if _, err := second.Apply(ctx); err != nil {
+		t.Fatalf("re-applying: %v", err)
+	}
+	if !hasUsage() {
+		t.Error("re-applying did not restore the revoked USAGE")
+	}
+}
