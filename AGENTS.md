@@ -18,6 +18,7 @@ needs inside an RDS or Aurora database.
 ```sh
 make check              # fmt, vet, unit tests -- what CI runs
 make test               # unit tests, no database needed
+make test-envtest       # controller against a real kube-apiserver, no cluster
 make test-integration   # runs generated SQL against a real PostgreSQL 16
 make test-equivalence   # diffs this engine against the provisioner it replaces
 make generate           # deepcopy, CRDs, RBAC (after editing apis/)
@@ -93,7 +94,15 @@ Unit tests need nothing. Integration tests need a database and are behind the
 plan construction gets a unit test; every bug about what the *server* accepts
 gets an integration test.
 
-There is a third suite behind the `equivalence` tag. It runs a rendered script
+A third suite behind the `envtest` tag runs the reconciler against a real
+kube-apiserver and etcd, downloaded by `setup-envtest` -- no cluster, no
+Docker. It covers what a function call cannot see: the CRD schema as the API
+server enforces it (defaults, enums, the identifier patterns that keep injected
+SQL out), and the reconcile contract (status subresource writes, conditions,
+finalizer handling, deletion). The engine is faked there; the SQL is not under
+test.
+
+There is a fourth suite behind the `equivalence` tag. It runs a rendered script
 from whatever implementation is being replaced and this engine against the same
 seed, then diffs the resulting ownership, ACLs and default privileges. Use it
 before cutting a database over. It has already earned its keep once: the

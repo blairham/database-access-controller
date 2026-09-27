@@ -48,11 +48,16 @@ docker-build:
 	docker build -t $(IMG) .
 
 .PHONY: check
-check: fmt vet test ## What CI runs.
+check: fmt vet test test-envtest ## What CI runs. No database or cluster needed.
 
 .PHONY: help
 help:
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: test-envtest
+test-envtest: ## Run the controller against a real kube-apiserver (no cluster).
+	KUBEBUILDER_ASSETS="$$($(GO) run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path)" \
+	  $(GO) test -tags envtest ./internal/controller/... -v
 
 .PHONY: test-equivalence
 test-equivalence: pg-up ## Diff this engine against the provisioner it replaces. Needs JOB_SCRIPT, EQ_SCHEMA, EQ_ROLE.

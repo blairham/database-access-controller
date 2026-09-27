@@ -140,6 +140,23 @@ owned by someone else, and a view among the tables.
 make test-integration
 ```
 
+### The controller contract
+
+`internal/controller/databaseaccess` is tested against a real kube-apiserver
+via envtest, because two things matter there that no function call reveals.
+
+The **CRD schema as the API server enforces it**: that `engine` defaults to
+`postgres` and the enum rejects anything else, and that the identifier patterns
+on `role` and `schema` are applied at admission. Those patterns are the only
+thing standing between a CRD field and injected SQL, since PostgreSQL does not
+accept a parameter where an identifier is required. A Go-side check is not
+enough on its own -- anything that writes the resource bypasses it.
+
+The **reconcile contract**: status subresource writes, conditions, that a
+failure lands on the resource rather than being retried silently, that the
+finalizer is added only when `revokeOnDelete` asks for one, and that deletion
+runs the revoke plan before releasing it.
+
 ### Differential testing against the implementation being replaced
 
 Unit and integration tests prove the engine is correct on its own terms. They

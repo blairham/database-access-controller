@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -49,6 +50,12 @@ type Reconciler struct {
 
 	// NewEngine opens the engine for a resource.
 	NewEngine EngineFactory
+
+	// Options are passed to the underlying controller. The zero value is
+	// correct in production; tests set SkipNameValidation because
+	// controller-runtime requires controller names to be unique per process
+	// and each test runs its own manager.
+	Options controller.Options
 }
 
 // +kubebuilder:rbac:groups=database-controller.io,resources=databaseaccesses,verbs=get;list;watch;create;update;patch;delete
@@ -231,5 +238,6 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&dbv1alpha1.DatabaseAccess{}).
 		Named("databaseaccess").
+		WithOptions(r.Options).
 		Complete(r)
 }
