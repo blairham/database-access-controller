@@ -43,6 +43,9 @@ func (r Relation) AlterVerb() string {
 // execution time, which meant nothing could be reviewed before it ran and the
 // log reported only that the block completed.
 type Inspector interface {
+	// RoleExists reports whether the role is present in pg_roles.
+	RoleExists(ctx context.Context, role string) (bool, error)
+
 	// SchemaExists reports whether the schema is present in pg_namespace.
 	SchemaExists(ctx context.Context, schema string) (bool, error)
 
@@ -67,6 +70,8 @@ type Inspector interface {
 // Queries used by the pgx-backed Inspector. They are exported so the CLI can
 // run the same reads without linking the controller.
 const (
+	QueryRoleExists = `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`
+
 	QuerySchemaExists = `SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)`
 
 	// QueryObjectOwners unions relation owners with the schema owner. The

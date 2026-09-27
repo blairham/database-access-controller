@@ -16,12 +16,12 @@ generate: ## Regenerate deepcopy, CRDs, RBAC, and sync them into the chart.
 .PHONY: helm-lint
 helm-lint: ## Lint and render the chart, including with the toggles flipped.
 	helm lint charts/database-controller
-	helm template dc charts/database-controller >/dev/null
-	helm template dc charts/database-controller --set crds.install=false >/dev/null
-	helm template dc charts/database-controller --set rbac.create=false >/dev/null
-	helm template dc charts/database-controller --set autoscaling.enabled=true >/dev/null
-	helm template dc charts/database-controller --set podDisruptionBudget.maxUnavailable=1 >/dev/null
-	helm template dc charts/database-controller --set metrics.serviceMonitor.enabled=true >/dev/null
+	helm template database-controller charts/database-controller >/dev/null
+	helm template database-controller charts/database-controller --set crds.install=false >/dev/null
+	helm template database-controller charts/database-controller --set rbac.create=false >/dev/null
+	helm template database-controller charts/database-controller --set autoscaling.enabled=true >/dev/null
+	helm template database-controller charts/database-controller --set podDisruptionBudget.maxUnavailable=1 >/dev/null
+	helm template database-controller charts/database-controller --set metrics.serviceMonitor.enabled=true >/dev/null
 
 .PHONY: check-generated
 check-generated: generate ## Fail if the generated files are out of date.
@@ -58,6 +58,30 @@ pg-down:
 build:
 	$(GO) build -o $(BIN)/manager ./cmd/manager
 	$(GO) build -o $(BIN)/dbctl ./cmd/dbctl
+
+RIG_CONTEXT ?= k5s/database-controller
+RIG_NAMESPACE ?= default
+KIND_CLUSTER ?= k8s
+
+.PHONY: rig-install
+rig-install: docker-build ## Build, side-load and helm-install the controller into the k5s rig.
+	kind load docker-image $(IMG) --name $(KIND_CLUSTER)
+	helm --kube-context $(RIG_CONTEXT) upgrade --install database-controller charts/database-controller \
+	  --namespace $(RIG_NAMESPACE) \
+	  --set image.repository=$(firstword $(subst :, ,$(IMG))) \
+	  --set image.tag=$(lastword $(subst :, ,$(IMG))) \
+	  --set image.pullPolicy=IfNotPresent \
+	  --set replicaCount=1 \
+	  --set priorityClassName= \
+	  --set logEncoder=console \
+	  --wait --timeout 2m
+
+.PHONY: rig-test
+rig-test: ## Apply the example DatabaseAccess and wait for it to go Ready.
+	kubectl --context $(RIG_CONTEXT) apply -f examples/rig-databaseaccess.yaml
+	kubectl --context $(RIG_CONTEXT) wait --for=condition=Ready \
+	  databaseaccess/rig-app -n $(RIG_NAMESPACE) --timeout=90s
+	kubectl --context $(RIG_CONTEXT) get databaseaccess -n $(RIG_NAMESPACE) -o wide
 
 .PHONY: docker-build
 docker-build:

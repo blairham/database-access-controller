@@ -10,16 +10,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -33,6 +37,20 @@ var scheme = runtime.NewScheme()
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(dbv1alpha1.AddToScheme(scheme))
+}
+
+// watchedTypes returns the resources the enabled controllers watch, so
+// readiness can verify each one is actually watchable. A controller added
+// without a row here would report ready while unable to see its own resource.
+func watchedTypes(names []string) []client.Object {
+	var out []client.Object
+	for _, n := range names {
+		switch n {
+		case "databaseaccess":
+			out = append(out, &dbv1alpha1.DatabaseAccess{})
+		}
+	}
+	return out
 }
 
 func main() {
@@ -81,9 +99,11 @@ func main() {
 	}
 
 	enabled := map[string]bool{}
+	var enabledNames []string
 	for _, name := range strings.Split(enabledFlag, ",") {
 		if n := strings.TrimSpace(name); n != "" {
 			enabled[n] = true
+			enabledNames = append(enabledNames, n)
 		}
 	}
 
@@ -117,7 +137,35 @@ func main() {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+
+	// Readiness is "can I watch what I am here to watch", NOT a ping.
+	//
+	// A ping passes as soon as the HTTP server is listening, which says
+	// nothing about whether the manager can watch anything. With the CRD
+	// absent the controller logs `no matches for kind "DatabaseAccess"` every
+	// few seconds and never starts its workers -- while the pod reports Ready,
+	// a rollout completes, and any PDB or readiness gate downstream is
+	// satisfied. Measured on a rig: 1/1 Running, zero "Starting workers", and
+	// completely inert.
+	//
+	// ⚠ WaitForCacheSync IS NOT THE CHECK, and it looks like it should be. It
+	// waits on the informers the cache has been asked for, and when the CRD is
+	// missing the informer was never successfully registered -- so there is
+	// nothing to wait for and it returns true. Tried first, and the pod stayed
+	// Ready with the CRD deleted.
+	//
+	// GetInformer resolves the type through the RESTMapper, so it fails while
+	// the CRD is absent and succeeds once it exists.
+	if err := mgr.AddReadyzCheck("readyz", func(req *http.Request) error {
+		ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
+		defer cancel()
+		for _, obj := range watchedTypes(enabledNames) {
+			if _, err := mgr.GetCache().GetInformer(ctx, obj); err != nil {
+				return fmt.Errorf("cannot watch %T; is its CRD installed? %w", obj, err)
+			}
+		}
+		return nil
+	}); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}

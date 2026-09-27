@@ -17,18 +17,18 @@
 # LOCAL, which is the default and almost always what you want:
 #
 #   k5s up -f k5s.yaml
-#   helm --kube-context k5s/database-controller install dc charts/database-controller \
-#     --set replicaCount=1 --set image.repository=database-controller --set image.tag=dev \
-#     --set logEncoder=console
+#   make rig-install
 #   kubectl --context k5s/database-controller apply -f examples/rig-databaseaccess.yaml
+#   kubectl --context k5s/database-controller get databaseaccess -w
 #
-# k5s runs the services and has no key for applying charts, so the release goes
-# on afterwards. replicaCount=1 because a single-node kind cluster has nothing
-# to spread a second replica onto, and console logging because you are reading
-# them in a terminal.
+# THIS LANE RUNS POSTGRES ONLY. The controller is installed by Helm, because
+# that is how it is installed everywhere else and a rig that installed it some
+# other way would be testing a path nobody uses. `make rig-install` builds the
+# image, side-loads it into kind, and runs `helm upgrade --install` against the
+# rig context.
 #
-# NOTE the rig builds the controller image itself, so the release points at that
-# tag rather than a registry.
+# replicaCount=1 there, because a single-node kind cluster has nowhere to put a
+# second replica, and console logging because you are reading it in a terminal.
 #
 # ⚠ THE RIG USES PASSWORD AUTH, AND THAT IS THE POINT OF THE OPTION. A local
 # PostgreSQL has no IAM, so `auth.method: password` is the only way the
@@ -47,7 +47,9 @@ services:
   # The database the controller provisions into. Password auth, because there
   # is no IAM here.
   postgres:
-    image: postgres:16-alpine
+    # AWS's mirror, not Docker Hub: Hub is blocked outright on some networks
+    # here and the pull fails with an i/o timeout.
+    image: public.ecr.aws/docker/library/postgres:16-alpine
     ports:
       - 5432
     env:
@@ -60,21 +62,12 @@ services:
         - pg_isready
         - -U
         - db_provisioner
-
-  # The controller, built from this repo so the rig proves the change in front
-  # of you rather than the last release.
-  #
-  # Leader election is on deliberately: it is one of the few things this lane
-  # covers and the test suites cannot, and it needs the Lease RBAC in
-  # config/rbac to be right.
-  database-controller:
-    build:
-      context: .
-    replicas: 1
-    strategy: Recreate
-    readiness:
-      path: /readyz
-      port: 8081
-    ports:
-      - 8080
-      - 8081
+        # -d IS REQUIRED, and leaving it off looks harmless. pg_isready
+        # defaults the database name to the USERNAME, so `-U db_provisioner`
+        # alone connects to a database called db_provisioner that does not
+        # exist. The probe still passes -- a FATAL means the server answered,
+        # which is all pg_isready asks -- while logging
+        # `FATAL: database "db_provisioner" does not exist` every two seconds.
+        # Measured on this rig: 214 of them, burying the real errors.
+        - -d
+        - appdb

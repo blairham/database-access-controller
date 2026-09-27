@@ -69,14 +69,30 @@ func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, er
 	role := QuoteIdent(a.Principal)
 	p := &plan.Plan{}
 
-	// PostgreSQL has no CREATE ROLE IF NOT EXISTS. The tolerated error is
-	// narrow and explicit rather than a blanket stderr filter.
-	p.Add(&Statement{
-		SQL:    fmt.Sprintf("CREATE ROLE %s WITH LOGIN", role),
-		Why:    "per-service login role; PostgreSQL has no CREATE ROLE IF NOT EXISTS",
-		Ignore: []string{"already exists"},
-		exec:   e.exec,
-	})
+	// PostgreSQL has no CREATE ROLE IF NOT EXISTS, so the role is looked up
+	// first and the statement omitted when it is already there.
+	//
+	// Relying on the tolerated error instead works, but every re-run then
+	// writes `ERROR: role "x" already exists` to the SERVER log -- on a
+	// reconciling controller that is one line per resource per interval,
+	// forever, in the log an operator greps during an incident. Checking first
+	// keeps it quiet.
+	//
+	// The tolerance stays as a backstop: between this read and the write, a
+	// concurrent reconcile or a human can create the role, and that race
+	// should not fail the plan.
+	exists, err := e.inspect.RoleExists(ctx, a.Principal)
+	if err != nil {
+		return nil, fmt.Errorf("checking role %q: %w", a.Principal, err)
+	}
+	if !exists {
+		p.Add(&Statement{
+			SQL:    fmt.Sprintf("CREATE ROLE %s WITH LOGIN", role),
+			Why:    "per-service login role; PostgreSQL has no CREATE ROLE IF NOT EXISTS",
+			Ignore: []string{"already exists"},
+			exec:   e.exec,
+		})
+	}
 
 	if a.IAMAuth {
 		p.Add(&Statement{

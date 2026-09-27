@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -11,9 +12,14 @@ import (
 // fakeInspector serves canned answers so plan construction can be tested
 // without a database.
 type fakeInspector struct {
+	roles     map[string]bool
 	schemas   map[string]bool
 	owners    map[string][]string
 	relations map[string][]Relation
+}
+
+func (f fakeInspector) RoleExists(_ context.Context, role string) (bool, error) {
+	return f.roles[role], nil
 }
 
 func (f fakeInspector) SchemaExists(_ context.Context, schema string) (bool, error) {
@@ -334,4 +340,45 @@ func TestDefaultPrivilegeOwnersAreDeduplicated(t *testing.T) {
 	if count != 1 {
 		t.Errorf("the same default-privilege statement appears %d times, want 1", count)
 	}
+}
+
+// CREATE ROLE is omitted when the role already exists.
+//
+// Relying on the tolerated "already exists" error instead works, but every
+// re-run then writes ERROR: role "x" already exists to the SERVER log -- one
+// line per resource per reconcile, forever, in the log an operator greps
+// during an incident.
+func TestCreateRoleIsOmittedWhenTheRoleExists(t *testing.T) {
+	e := New(nil, fakeInspector{roles: map[string]bool{"app_role": true}}, nil)
+	got := planText(t, e, engine.Access{Database: "appdb", Principal: "app_role"})
+
+	mustNotContain(t, got, "CREATE ROLE")
+	mustContain(t, got, `GRANT CONNECT, CREATE ON DATABASE "appdb" TO "app_role";`)
+}
+
+func TestCreateRoleIsEmittedWhenTheRoleIsAbsent(t *testing.T) {
+	e := New(nil, fakeInspector{roles: map[string]bool{}}, nil)
+	got := planText(t, e, engine.Access{Database: "appdb", Principal: "app_role"})
+	mustContain(t, got, `CREATE ROLE "app_role" WITH LOGIN;`)
+}
+
+// The tolerance stays as a backstop: between the existence check and the
+// write, a concurrent reconcile or a human can create the role, and that race
+// must not fail the plan.
+func TestCreateRoleStillToleratesAConcurrentCreate(t *testing.T) {
+	e := New(nil, fakeInspector{roles: map[string]bool{}}, nil)
+	p, err := e.BuildPlan(context.Background(), engine.Access{Database: "appdb", Principal: "app_role"})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	for _, s := range p.Steps() {
+		if !strings.HasPrefix(s.Describe(), "CREATE ROLE") {
+			continue
+		}
+		if !s.Tolerates(errors.New(`pq: role "app_role" already exists`)) {
+			t.Error("CREATE ROLE no longer tolerates a concurrent create")
+		}
+		return
+	}
+	t.Fatal("no CREATE ROLE statement in the plan")
 }

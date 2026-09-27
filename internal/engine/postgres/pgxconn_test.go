@@ -18,6 +18,12 @@ func (p pgxConn) Exec(ctx context.Context, sql string, args ...any) error {
 	return err
 }
 
+func (p pgxConn) RoleExists(ctx context.Context, role string) (bool, error) {
+	var b bool
+	err := p.c.QueryRow(ctx, QueryRoleExists, role).Scan(&b)
+	return b, err
+}
+
 func (p pgxConn) SchemaExists(ctx context.Context, schema string) (bool, error) {
 	var b bool
 	err := p.c.QueryRow(ctx, QuerySchemaExists, schema).Scan(&b)

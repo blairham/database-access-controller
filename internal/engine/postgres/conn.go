@@ -94,6 +94,15 @@ func (c *Conn) Exec(ctx context.Context, sql string, args ...any) error {
 // Close releases the connection.
 func (c *Conn) Close(ctx context.Context) error { return c.conn.Close(ctx) }
 
+// RoleExists reports whether the role is present.
+func (c *Conn) RoleExists(ctx context.Context, role string) (bool, error) {
+	var exists bool
+	if err := c.conn.QueryRow(ctx, QueryRoleExists, role).Scan(&exists); err != nil {
+		return false, fmt.Errorf("querying pg_roles for %q: %w", role, err)
+	}
+	return exists, nil
+}
+
 // SchemaExists reports whether the schema is present.
 func (c *Conn) SchemaExists(ctx context.Context, schema string) (bool, error) {
 	var exists bool
