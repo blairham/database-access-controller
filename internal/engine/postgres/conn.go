@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -22,8 +23,14 @@ type ConnConfig struct {
 
 	// Tokens supplies the IAM auth token used as the password. RDS rejects a
 	// plaintext connection for an IAM user, so SSLMode must stay at require or
-	// stricter.
+	// stricter when this is set.
+	//
+	// Exactly one of Tokens and Password is set.
 	Tokens TokenSource
+
+	// Password is a static password, for a PostgreSQL that does not offer IAM
+	// authentication -- a self-managed server, or one in a development rig.
+	Password string
 }
 
 // Conn is a pgx-backed Execer and Inspector.
@@ -50,9 +57,18 @@ func Connect(ctx context.Context, cfg ConnConfig) (*Conn, error) {
 		sslMode = "require"
 	}
 
-	token, err := cfg.Tokens.Token(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("minting auth token: %w", err)
+	password := cfg.Password
+	switch {
+	case cfg.Tokens != nil && password != "":
+		return nil, errors.New("both an IAM token source and a static password were supplied; set exactly one")
+	case cfg.Tokens != nil:
+		var err error
+		password, err = cfg.Tokens.Token(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("minting auth token: %w", err)
+		}
+	case password == "":
+		return nil, errors.New("no credentials: set either an IAM token source or a password")
 	}
 
 	pgCfg, err := pgx.ParseConfig(fmt.Sprintf("host=%s port=%d database=%s user=%s sslmode=%s",
@@ -60,7 +76,7 @@ func Connect(ctx context.Context, cfg ConnConfig) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing connection config: %w", err)
 	}
-	pgCfg.Password = token
+	pgCfg.Password = password
 
 	conn, err := pgx.ConnectConfig(ctx, pgCfg)
 	if err != nil {

@@ -1,0 +1,75 @@
+# database-controller's rig — the controller against a real PostgreSQL, in a
+# real cluster.
+#
+# ── What this covers that the test suites do not ────────────────────────────
+#
+# `make test` and `make test-envtest` already cover the plan and the reconcile
+# contract, and `make test-integration` runs the generated SQL against a real
+# PostgreSQL. What none of them exercise is the deployment itself: the built
+# image actually starting, the generated RBAC actually being sufficient, leader
+# election against a real Lease, and the probe endpoints answering.
+#
+# This lane is for that. It is not where you debug SQL -- the integration suite
+# is faster and tells you more.
+#
+# ── Running it ──────────────────────────────────────────────────────────────
+#
+# LOCAL, which is the default and almost always what you want:
+#
+#   k5s up -f k5s.yaml
+#   kubectl --context k5s/database-controller apply -k config/default
+#   kubectl --context k5s/database-controller apply -f examples/rig-databaseaccess.yaml
+#
+# k5s runs the services; it has no key for applying raw manifests, so the CRD,
+# RBAC and Deployment go on with kubectl afterwards. Nothing about that is
+# unusual -- they are ordinary cluster objects and kustomize already renders
+# them.
+#
+# ⚠ THE RIG USES PASSWORD AUTH, AND THAT IS THE POINT OF THE OPTION. A local
+# PostgreSQL has no IAM, so `auth.method: password` is the only way the
+# controller can reach it. Production stays on the default, `iam`.
+#
+# ⚠ THIS LANE DOES NOT EXERCISE POD IDENTITY. That path needs real RDS and a
+# real association, so it only appears on dev EKS via `--remote`, which is
+# opt-in and needs a `remote:` block this repo deliberately does not carry yet.
+# A green local rig says nothing about whether the IAM path works.
+apiVersion: k5s.dev/v1beta1
+kind: Stack
+name: database-controller
+context: kind-k8s
+
+services:
+  # The database the controller provisions into. Password auth, because there
+  # is no IAM here.
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - 5432
+    env:
+      POSTGRES_USER: db_provisioner
+      POSTGRES_PASSWORD: rigpassword
+      POSTGRES_DB: appdb
+      PGDATA: /var/lib/postgresql/data/pgdata
+    readiness:
+      exec:
+        - pg_isready
+        - -U
+        - db_provisioner
+
+  # The controller, built from this repo so the rig proves the change in front
+  # of you rather than the last release.
+  #
+  # Leader election is on deliberately: it is one of the few things this lane
+  # covers and the test suites cannot, and it needs the Lease RBAC in
+  # config/rbac to be right.
+  database-controller:
+    build:
+      context: .
+    replicas: 1
+    strategy: Recreate
+    readiness:
+      path: /readyz
+      port: 8081
+    ports:
+      - 8080
+      - 8081

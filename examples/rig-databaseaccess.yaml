@@ -1,0 +1,49 @@
+# A DatabaseAccess for the local rig.
+#
+# The only thing that differs from a production resource is the auth block: a
+# PostgreSQL in a kind cluster has no IAM, so the admin connection uses a
+# password from a Secret. Everything the controller does afterwards is the same
+# code path production takes.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rig-admin-creds
+  namespace: default
+stringData:
+  # Matches POSTGRES_PASSWORD in k5s.yaml.
+  password: rigpassword
+---
+apiVersion: database-controller.io/v1alpha1
+kind: DatabaseAccess
+metadata:
+  name: rig-app
+  namespace: default
+spec:
+  engine: postgres
+  instance:
+    # The in-cluster Service name k5s gives the postgres service.
+    endpoint: postgres
+    port: 5432
+    database: appdb
+    region: us-east-1
+    adminUser: db_provisioner
+    # No TLS on a rig PostgreSQL.
+    sslMode: disable
+    auth:
+      method: password
+      passwordSecretRef:
+        name: rig-admin-creds
+        key: password
+  role: app_role
+  # rds_iam does not exist outside RDS, so granting it here would fail.
+  iamAuth: false
+  grants:
+    - schema: app
+      privileges:
+        - USAGE
+        - CREATE
+        - SELECT
+        - INSERT
+        - UPDATE
+        - DELETE
+      ownerOf: true

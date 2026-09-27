@@ -65,6 +65,16 @@ one-shot `GRANT ... ON ALL TABLES` covers everything that exists today, so
 access works, and then a migration replaces a view or a table and the new
 object silently carries no grant. Nothing re-runs, so it stays broken.
 
+**The principal is added to the owner list when it will own the schema.** The
+enumeration reflects the database as it is *before* the plan runs, and two
+cases are invisible from there: a greenfield schema does not exist yet, so it
+reports no owners at all; and on an existing schema, the reassignment further
+down the same plan makes the principal the owner of relations the enumeration
+attributed to someone else. Without this the first run registers nothing for
+the role about to create every object, and only a later reconcile converges.
+A read-only consumer is deliberately not added -- it creates nothing there, so
+the entry would never fire.
+
 **Owners come from `pg_class`, not `pg_namespace.nspowner`.** The schema owner
 is not reliably the object owner — a schema created by an admin and populated
 by an application role has two different answers. Deriving defaults from
@@ -164,7 +174,7 @@ cannot prove it is a *drop-in* for the script it replaces, and that is the
 question that matters when cutting over a database that already has state.
 
 `equivalence_test.go` answers it by running both implementations against the
-same seed and diffing the resulting state -- object ownership, schema and
+same seed **to convergence** and diffing the resulting state -- object ownership, schema and
 relation ACLs, and `pg_default_acl` entries. Comparing the two SQL texts would
 not work: the older implementation runs server-side `DO` blocks that loop over
 `pg_class` at execution time, while this one reads first and emits concrete
@@ -195,6 +205,15 @@ orders tables ahead of sequences.
 No unit test would have caught this. The statement is well-formed, the fake
 inspector happily returns the sequence, and the failure exists only in
 PostgreSQL's rules about what may own what.
+
+**Convergence, not a single run, is what gets compared**, and the difference is
+real rather than a convenience. The older implementation enumerates owners
+before its reassignment blocks, so its first pass registers default privileges
+for the old owners only and the incoming role picks its entry up on the next
+run. This engine adds that role during the first pass. The two disagree after
+one run and agree once settled; for a controller that re-reconciles, settled
+state is the property that matters, and reaching it in one pass rather than two
+is the improvement.
 
 ## Not in scope
 

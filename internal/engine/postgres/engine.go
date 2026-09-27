@@ -144,7 +144,7 @@ func (e *Engine) addNamespace(ctx context.Context, p *plan.Plan, principal strin
 			Why:  "covers tables that exist now; the default privileges below cover tables created later",
 			exec: e.exec,
 		})
-		if err := e.addDefaultPrivileges(ctx, p, principal, ns.Name, "TABLES", privs.Table); err != nil {
+		if err := e.addDefaultPrivileges(ctx, p, principal, ns.Name, "TABLES", privs.Table, ns.Owner); err != nil {
 			return err
 		}
 	}
@@ -155,7 +155,7 @@ func (e *Engine) addNamespace(ctx context.Context, p *plan.Plan, principal strin
 			Why:  "sequence privileges are the requested set intersected with SELECT/UPDATE/USAGE, the only ones a sequence accepts",
 			exec: e.exec,
 		})
-		if err := e.addDefaultPrivileges(ctx, p, principal, ns.Name, "SEQUENCES", privs.Sequence); err != nil {
+		if err := e.addDefaultPrivileges(ctx, p, principal, ns.Name, "SEQUENCES", privs.Sequence, ns.Owner); err != nil {
 			return err
 		}
 	}
@@ -179,12 +179,35 @@ func (e *Engine) addNamespace(ctx context.Context, p *plan.Plan, principal strin
 // net then never fires anywhere, in any schema, and the only thing granting
 // access is the one-shot GRANT ON ALL TABLES above, which does not survive the
 // next migration that replaces an object.
-func (e *Engine) addDefaultPrivileges(ctx context.Context, p *plan.Plan, principal, schema, objType string, privs []string) error {
+func (e *Engine) addDefaultPrivileges(ctx context.Context, p *plan.Plan, principal, schema, objType string, privs []string, principalWillOwn bool) error {
 	owners, err := e.inspect.ObjectOwners(ctx, schema)
 	if err != nil {
 		return fmt.Errorf("enumerating owners of schema %q: %w", schema, err)
 	}
+
+	// The principal is added when it is going to own the schema, because the
+	// enumeration above reflects the database as it is BEFORE this plan runs.
+	//
+	// Two cases need it, and both are invisible to a query made first. A
+	// greenfield schema does not exist yet, so ObjectOwners returns nothing at
+	// all and no default is registered for the role about to create every
+	// object in it. And on an existing schema the reassignment further down
+	// this plan makes the principal the owner of relations the enumeration
+	// attributed to someone else.
+	//
+	// Without this the first run registers nothing and only a later reconcile
+	// converges -- correct eventually, but the implementation this replaces
+	// enumerated owners server-side at execution time and got it in one pass.
+	if principalWillOwn {
+		owners = append(owners, principal)
+	}
+
+	seen := make(map[string]bool, len(owners))
 	for _, owner := range owners {
+		if seen[owner] {
+			continue
+		}
+		seen[owner] = true
 		if err := ValidateIdent("owner role", owner); err != nil {
 			return fmt.Errorf("schema %q: %w", schema, err)
 		}

@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -81,7 +83,7 @@ func (s *fakeStep) Apply(context.Context) error {
 }
 
 func (f *fakeEngine) factory() EngineFactory {
-	return func(context.Context, dbv1alpha1.DatabaseAccessSpec) (engine.Engine, error) {
+	return func(context.Context, *dbv1alpha1.DatabaseAccess) (engine.Engine, error) {
 		return f, nil
 	}
 }
@@ -335,5 +337,107 @@ func TestDeleteRevokesThenReleasesTheFinalizer(t *testing.T) {
 	defer f.mu.Unlock()
 	if f.revoked == 0 {
 		t.Error("the revoke plan never ran, but revokeOnDelete was true")
+	}
+}
+
+// Password auth resolves the Secret from the resource's own namespace. The
+// namespace is deliberately not taken from the reference: a controller that
+// read Secrets from any namespace on the say-so of a resource in another would
+// be a privilege-escalation path.
+func TestPasswordAuthReadsTheSecret(t *testing.T) {
+	ctx := context.Background()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "admin-creds", Namespace: "default"},
+		Data:       map[string][]byte{"password": []byte("s3cret")},
+	}
+	if err := k8sClient.Create(ctx, secret); err != nil {
+		t.Fatalf("creating secret: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, secret) })
+
+	da := newAccess(t, "password-auth", func(da *dbv1alpha1.DatabaseAccess) {
+		da.Spec.Instance.Auth = &dbv1alpha1.InstanceAuth{
+			Method:            dbv1alpha1.AuthPassword,
+			PasswordSecretRef: &dbv1alpha1.SecretKeySelector{Name: "admin-creds"},
+		}
+	})
+
+	got, err := resolvePassword(ctx, k8sClient, get(t, da.Name))
+	if err != nil {
+		t.Fatalf("resolvePassword: %v", err)
+	}
+	if got != "s3cret" {
+		t.Errorf("resolved password %q, want s3cret", got)
+	}
+}
+
+func TestPasswordAuthErrorsAreActionable(t *testing.T) {
+	ctx := context.Background()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "wrong-key", Namespace: "default"},
+		Data:       map[string][]byte{"pw": []byte("s3cret")},
+	}
+	if err := k8sClient.Create(ctx, secret); err != nil {
+		t.Fatalf("creating secret: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, secret) })
+
+	for _, tc := range []struct {
+		name string
+		auth *dbv1alpha1.InstanceAuth
+		want string
+	}{
+		{
+			name: "no reference",
+			auth: &dbv1alpha1.InstanceAuth{Method: dbv1alpha1.AuthPassword},
+			want: "passwordSecretRef is unset",
+		},
+		{
+			name: "missing secret",
+			auth: &dbv1alpha1.InstanceAuth{
+				Method:            dbv1alpha1.AuthPassword,
+				PasswordSecretRef: &dbv1alpha1.SecretKeySelector{Name: "nope"},
+			},
+			want: "reading secret",
+		},
+		{
+			name: "wrong key names the keys it found",
+			auth: &dbv1alpha1.InstanceAuth{
+				Method:            dbv1alpha1.AuthPassword,
+				PasswordSecretRef: &dbv1alpha1.SecretKeySelector{Name: "wrong-key"},
+			},
+			want: `has no key "password"`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			da := &dbv1alpha1.DatabaseAccess{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default"},
+				Spec:       dbv1alpha1.DatabaseAccessSpec{Instance: dbv1alpha1.InstanceRef{Auth: tc.auth}},
+			}
+			_, err := resolvePassword(ctx, k8sClient, da)
+			if err == nil {
+				t.Fatal("resolvePassword succeeded, want an error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// The default stays IAM, so adding the field changes nothing for existing
+// resources.
+func TestAuthDefaultsToIAM(t *testing.T) {
+	da := newAccess(t, "auth-default", func(da *dbv1alpha1.DatabaseAccess) {
+		da.Spec.Instance.Auth = &dbv1alpha1.InstanceAuth{}
+	})
+	got := get(t, da.Name)
+	if m := got.Spec.Instance.Auth.Method; m != dbv1alpha1.AuthIAM {
+		t.Errorf("auth.method = %q, want the API server to default it to %q", m, dbv1alpha1.AuthIAM)
+	}
+	if authMethod(get(t, "auth-default").Spec.Instance) != dbv1alpha1.AuthIAM {
+		t.Error("authMethod did not report iam")
 	}
 }

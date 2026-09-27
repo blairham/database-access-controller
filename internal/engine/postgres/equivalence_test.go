@@ -315,8 +315,23 @@ func TestEquivalenceWithTheProvisionerJob(t *testing.T) {
 			ctx := context.Background()
 			c := eqConn(t)
 
-			// Half one: the Job.
+			// Half one: the Job, run to convergence.
+			//
+			// CONVERGED state is the comparison, not the state after one run,
+			// and the difference is real rather than a convenience. The Job
+			// enumerates object owners BEFORE its ownership-reassignment
+			// blocks, so its first pass registers default privileges for the
+			// OLD owners only; the role that is about to own everything picks
+			// its entry up on the next run. This engine adds that role during
+			// the first pass, because it knows the reassignment further down
+			// the same plan will make it the owner.
+			//
+			// So the two disagree after one run and agree once settled. For a
+			// controller that re-reconciles on an interval, settled state is
+			// the property that matters -- and reaching it in one pass rather
+			// than two is the improvement, not a divergence to paper over.
 			eqSeed(t, c)
+			runJobScript(t, script)
 			runJobScript(t, script)
 			jobState := eqDump(t, c)
 
@@ -327,15 +342,21 @@ func TestEquivalenceWithTheProvisionerJob(t *testing.T) {
 			eqSeed(t, c)
 			conn := pgxConn{c}
 			e := New(conn, conn, nil)
-			p, err := e.BuildPlan(ctx, tc.access)
-			if err != nil {
-				t.Fatalf("BuildPlan: %v", err)
+			// Twice on this side too, so both are compared at rest and the
+			// engine's plan is shown to be re-runnable at the same time.
+			var applied, warnings int
+			for pass := 1; pass <= 2; pass++ {
+				p, err := e.BuildPlan(ctx, tc.access)
+				if err != nil {
+					t.Fatalf("pass %d: BuildPlan: %v", pass, err)
+				}
+				res, err := p.Apply(ctx)
+				if err != nil {
+					t.Fatalf("pass %d: applying engine plan: %v\n\nplan:\n%s", pass, err, p.Describe())
+				}
+				applied, warnings = res.Applied, len(res.Warnings)
 			}
-			res, err := p.Apply(ctx)
-			if err != nil {
-				t.Fatalf("applying engine plan: %v\n\nplan:\n%s", err, p.Describe())
-			}
-			t.Logf("engine applied %d statement(s), %d warning(s)", res.Applied, len(res.Warnings))
+			t.Logf("engine applied %d statement(s), %d warning(s) on the settling pass", applied, warnings)
 			engineState := eqDump(t, c)
 
 			if jobState != engineState {

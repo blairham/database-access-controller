@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: database-controller-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: database-controller
+  namespace: database-controller-system
+  # On EKS this ServiceAccount is the identity the RDS IAM token is minted
+  # under, via a Pod Identity Association to a role holding rds-db:connect on
+  # the admin user's dbuser ARN. Nothing here references AWS: the SDK picks the
+  # association up from the container credentials endpoint.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database-controller
+  namespace: database-controller-system
+  labels:
+    app.kubernetes.io/name: database-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: database-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: database-controller
+    spec:
+      serviceAccountName: database-controller
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: database-controller:dev
+          args:
+            - --leader-elect
+            - --controllers=databaseaccess
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: metrics
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      terminationGracePeriodSeconds: 10

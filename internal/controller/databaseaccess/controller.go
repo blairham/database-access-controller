@@ -38,10 +38,6 @@ const (
 	driftInterval = time.Hour
 )
 
-// EngineFactory opens an engine for one resource. It is a field rather than a
-// direct call so tests can drive the reconciler without a database.
-type EngineFactory func(ctx context.Context, spec dbv1alpha1.DatabaseAccessSpec) (engine.Engine, error)
-
 // Reconciler reconciles a DatabaseAccess.
 type Reconciler struct {
 	client.Client
@@ -62,6 +58,7 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=database-controller.io,resources=databaseaccesses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=database-controller.io,resources=databaseaccesses/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile brings the database in line with the resource.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -86,7 +83,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	eng, err := r.NewEngine(ctx, da.Spec)
+	eng, err := r.NewEngine(ctx, &da)
 	if err != nil {
 		return r.fail(ctx, &da, "ConnectionFailed", err)
 	}
@@ -152,7 +149,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, da *dbv1alpha1.Databas
 	}
 
 	if da.Spec.RevokeOnDelete {
-		eng, err := r.NewEngine(ctx, da.Spec)
+		eng, err := r.NewEngine(ctx, da)
 		if err != nil {
 			return r.fail(ctx, da, "ConnectionFailed", err)
 		}

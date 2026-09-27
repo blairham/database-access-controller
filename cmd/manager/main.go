@@ -79,7 +79,7 @@ func main() {
 			Client:    mgr.GetClient(),
 			Scheme:    mgr.GetScheme(),
 			Recorder:  mgr.GetEventRecorderFor("databaseaccess"),
-			NewEngine: databaseaccess.DefaultEngineFactory,
+			NewEngine: databaseaccess.NewEngineFactory(mgr.GetClient()),
 		}
 		if err := r.SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "databaseaccess")

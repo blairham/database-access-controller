@@ -136,6 +136,36 @@ spec:
                       AdminUser is the PostgreSQL role the controller connects as. It needs
                       CREATEROLE and enough membership to reassign ownership.
                     type: string
+                  auth:
+                    description: Auth is how the controller authenticates as AdminUser.
+                    properties:
+                      method:
+                        default: iam
+                        description: Method is iam or password.
+                        enum:
+                        - iam
+                        - password
+                        type: string
+                      passwordSecretRef:
+                        description: |-
+                          PasswordSecretRef points at the Secret holding the admin password. It is
+                          required when Method is password and ignored otherwise. The Secret must
+                          live in the same namespace as this resource -- a controller that could
+                          read Secrets from any namespace on the say-so of a resource in one would
+                          be a privilege-escalation path.
+                        properties:
+                          key:
+                            default: password
+                            description: Key within the Secret.
+                            type: string
+                          name:
+                            description: Name of the Secret, in this resource's namespace.
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    type: object
                   database:
                     default: appdb
                     description: Database is the database to connect to and grant
@@ -159,6 +189,7 @@ spec:
                     default: require
                     description: SSLMode is the libpq sslmode for the admin connection.
                     enum:
+                    - disable
                     - require
                     - verify-ca
                     - verify-full

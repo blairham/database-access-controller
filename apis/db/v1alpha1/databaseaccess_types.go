@@ -61,10 +61,61 @@ type InstanceRef struct {
 	AdminUser string `json:"adminUser,omitempty"`
 
 	// SSLMode is the libpq sslmode for the admin connection.
-	// +kubebuilder:validation:Enum=require;verify-ca;verify-full
+	// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
 	// +kubebuilder:default=require
 	// +optional
 	SSLMode string `json:"sslMode,omitempty"`
+
+	// Auth is how the controller authenticates as AdminUser.
+	// +optional
+	Auth *InstanceAuth `json:"auth,omitempty"`
+}
+
+// AuthMethod is how the controller authenticates its admin connection.
+// +kubebuilder:validation:Enum=iam;password
+type AuthMethod string
+
+const (
+	// AuthIAM mints a short-lived RDS IAM token from the ambient AWS
+	// credentials. This is the production path and the default.
+	AuthIAM AuthMethod = "iam"
+
+	// AuthPassword reads a password from a Secret.
+	//
+	// It exists because IAM authentication is only available on RDS and
+	// Aurora. Without it the controller cannot reach a PostgreSQL that is not
+	// an AWS managed instance -- a self-managed server, or the one in a local
+	// development rig -- which also makes dbctl unusable anywhere but against
+	// real RDS.
+	AuthPassword AuthMethod = "password"
+)
+
+// InstanceAuth selects how the admin connection authenticates.
+type InstanceAuth struct {
+	// Method is iam or password.
+	// +kubebuilder:default=iam
+	// +optional
+	Method AuthMethod `json:"method,omitempty"`
+
+	// PasswordSecretRef points at the Secret holding the admin password. It is
+	// required when Method is password and ignored otherwise. The Secret must
+	// live in the same namespace as this resource -- a controller that could
+	// read Secrets from any namespace on the say-so of a resource in one would
+	// be a privilege-escalation path.
+	// +optional
+	PasswordSecretRef *SecretKeySelector `json:"passwordSecretRef,omitempty"`
+}
+
+// SecretKeySelector names one key in one Secret.
+type SecretKeySelector struct {
+	// Name of the Secret, in this resource's namespace.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Key within the Secret.
+	// +kubebuilder:default=password
+	// +optional
+	Key string `json:"key,omitempty"`
 }
 
 // Engine names the database engine a DatabaseAccess targets.

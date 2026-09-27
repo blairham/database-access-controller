@@ -3,6 +3,10 @@ package databaseaccess
 import (
 	"context"
 	"fmt"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
 	"github.com/blairham/database-controller/internal/engine"
@@ -10,50 +14,118 @@ import (
 	"github.com/blairham/database-controller/internal/rdsauth"
 )
 
-// DefaultEngineFactory opens the engine a DatabaseAccess names.
+// EngineFactory opens an engine for one resource.
 //
-// Only PostgreSQL is implemented. MySQL and SQL Server land here as additional
-// cases; DynamoDB deliberately never will, because it has no data-plane
-// principals -- access to a table is an IAM policy, which provider-aws-iam
-// already manages.
-func DefaultEngineFactory(ctx context.Context, spec dbv1alpha1.DatabaseAccessSpec) (engine.Engine, error) {
-	// The CRD enum rejects an unsupported engine at admission, so reaching this
-	// error means either a resource that predates the enum or a controller
-	// older than the CRD it is serving. Both are worth saying out loud rather
-	// than defaulting to PostgreSQL and provisioning the wrong dialect.
-	switch spec.Engine {
-	case "", dbv1alpha1.EnginePostgres:
-	default:
-		return nil, fmt.Errorf("unsupported engine %q: this controller implements %q",
-			spec.Engine, dbv1alpha1.EnginePostgres)
+// It takes the whole object rather than the spec because a password Secret is
+// resolved in the resource's own namespace. It is a field on the Reconciler so
+// tests can drive the controller without a database.
+type EngineFactory func(ctx context.Context, da *dbv1alpha1.DatabaseAccess) (engine.Engine, error)
+
+// NewEngineFactory returns the production factory.
+//
+// The client is used only to read a password Secret, and only from the
+// resource's own namespace: a controller that fetched Secrets from any
+// namespace on the say-so of a resource in another would be a
+// privilege-escalation path.
+func NewEngineFactory(c client.Client) EngineFactory {
+	return func(ctx context.Context, da *dbv1alpha1.DatabaseAccess) (engine.Engine, error) {
+		spec := da.Spec
+
+		// The CRD enum rejects an unsupported engine at admission, so reaching
+		// this error means either a resource that predates the enum or a
+		// controller older than the CRD it is serving. Both are worth saying
+		// out loud rather than defaulting to PostgreSQL and provisioning the
+		// wrong dialect.
+		switch spec.Engine {
+		case "", dbv1alpha1.EnginePostgres:
+		default:
+			return nil, fmt.Errorf("unsupported engine %q: this controller implements %q",
+				spec.Engine, dbv1alpha1.EnginePostgres)
+		}
+
+		inst := spec.Instance
+		connCfg := postgres.ConnConfig{
+			Host:     inst.Endpoint,
+			Port:     inst.Port,
+			Database: database(inst),
+			User:     adminUser(inst),
+			SSLMode:  inst.SSLMode,
+		}
+
+		switch authMethod(inst) {
+		case dbv1alpha1.AuthPassword:
+			password, err := resolvePassword(ctx, c, da)
+			if err != nil {
+				return nil, err
+			}
+			connCfg.Password = password
+		default:
+			tokens, err := rdsauth.New(ctx, rdsauth.Config{
+				Host:   inst.Endpoint,
+				Port:   inst.Port,
+				Region: inst.Region,
+				User:   adminUser(inst),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("preparing IAM auth: %w", err)
+			}
+			connCfg.Tokens = tokens
+		}
+
+		conn, err := postgres.Connect(ctx, connCfg)
+		if err != nil {
+			return nil, err
+		}
+
+		closeFn := func() error { return conn.Close(context.WithoutCancel(ctx)) }
+		return postgres.New(conn, conn, closeFn), nil
+	}
+}
+
+// resolvePassword reads the admin password from the Secret the resource names.
+func resolvePassword(ctx context.Context, c client.Client, da *dbv1alpha1.DatabaseAccess) (string, error) {
+	auth := da.Spec.Instance.Auth
+	if auth == nil || auth.PasswordSecretRef == nil {
+		return "", fmt.Errorf("auth.method is %q but auth.passwordSecretRef is unset", dbv1alpha1.AuthPassword)
+	}
+	ref := auth.PasswordSecretRef
+
+	key := ref.Key
+	if key == "" {
+		key = "password"
 	}
 
-	inst := spec.Instance
-
-	tokens, err := rdsauth.New(ctx, rdsauth.Config{
-		Host:   inst.Endpoint,
-		Port:   inst.Port,
-		Region: inst.Region,
-		User:   adminUser(inst),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("preparing IAM auth: %w", err)
+	var secret corev1.Secret
+	// Namespace is taken from the resource, never from the reference.
+	name := client.ObjectKey{Namespace: da.Namespace, Name: ref.Name}
+	if err := c.Get(ctx, name, &secret); err != nil {
+		return "", fmt.Errorf("reading secret %s: %w", name, err)
 	}
 
-	conn, err := postgres.Connect(ctx, postgres.ConnConfig{
-		Host:     inst.Endpoint,
-		Port:     inst.Port,
-		Database: database(inst),
-		User:     adminUser(inst),
-		SSLMode:  inst.SSLMode,
-		Tokens:   tokens,
-	})
-	if err != nil {
-		return nil, err
+	raw, ok := secret.Data[key]
+	if !ok {
+		return "", fmt.Errorf("secret %s has no key %q (keys: %s)",
+			name, key, strings.Join(secretKeys(secret), ", "))
 	}
+	if len(raw) == 0 {
+		return "", fmt.Errorf("secret %s key %q is empty", name, key)
+	}
+	return string(raw), nil
+}
 
-	closeFn := func() error { return conn.Close(context.WithoutCancel(ctx)) }
-	return postgres.New(conn, conn, closeFn), nil
+func secretKeys(s corev1.Secret) []string {
+	keys := make([]string, 0, len(s.Data))
+	for k := range s.Data {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func authMethod(i dbv1alpha1.InstanceRef) dbv1alpha1.AuthMethod {
+	if i.Auth == nil || i.Auth.Method == "" {
+		return dbv1alpha1.AuthIAM
+	}
+	return i.Auth.Method
 }
 
 func adminUser(i dbv1alpha1.InstanceRef) string {

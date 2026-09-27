@@ -57,6 +57,42 @@ The controller connects as the admin role using an IAM auth token from Pod
 Identity, reads the database's current state, builds a plan, applies it, and
 records what it did in `status`.
 
+## Authentication
+
+The admin connection uses an RDS IAM token by default, minted in-process from
+whatever AWS credentials the pod has -- on EKS, a Pod Identity Association on
+the controller's ServiceAccount.
+
+IAM auth only exists on RDS and Aurora. For a self-managed PostgreSQL, or the
+one in a local development rig, point the instance at a Secret instead:
+
+```yaml
+spec:
+  instance:
+    sslMode: disable
+    auth:
+      method: password
+      passwordSecretRef:
+        name: admin-creds
+        key: password
+```
+
+The Secret is read from the resource's own namespace, never from a namespace
+named in the reference. `dbctl` takes the password from `PGPASSWORD` instead,
+since there is no cluster to read a Secret from on a workstation.
+
+## Running it in a cluster
+
+```sh
+kubectl apply -k config/default    # CRD, RBAC, Deployment
+```
+
+There is also a `k5s.yaml` lane that brings up PostgreSQL plus the controller
+built from source, for exercising the deployment itself -- the image starting,
+the generated RBAC being sufficient, leader election against a real Lease. It
+uses password auth, because a kind cluster has no IAM, and it therefore says
+nothing about whether the Pod Identity path works. See the header of `k5s.yaml`.
+
 ## Seeing what it will do
 
 ```sh

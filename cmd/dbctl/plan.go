@@ -12,7 +12,9 @@ import (
 	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
 	"github.com/blairham/database-controller/internal/controller/databaseaccess"
 	"github.com/blairham/database-controller/internal/engine"
+	"github.com/blairham/database-controller/internal/engine/postgres"
 	"github.com/blairham/database-controller/internal/plan"
+	"github.com/blairham/database-controller/internal/rdsauth"
 )
 
 // loadAccess reads a DatabaseAccess manifest from a file or stdin.
@@ -40,10 +42,64 @@ func loadAccess(path string) (*dbv1alpha1.DatabaseAccess, error) {
 	return &da, nil
 }
 
+// openEngine connects the way the manifest asks, but resolves a password from
+// the environment rather than from a Secret.
+//
+// dbctl runs on a workstation, where there is no cluster to read a Secret from
+// and no reason to require one. The manifest still selects the method, so the
+// same file drives both paths.
+func openEngine(ctx context.Context, da *dbv1alpha1.DatabaseAccess) (engine.Engine, error) {
+	inst := da.Spec.Instance
+	adminUser := inst.AdminUser
+	if adminUser == "" {
+		adminUser = "db_provisioner"
+	}
+	database := inst.Database
+	if database == "" {
+		database = "appdb"
+	}
+
+	cfg := postgres.ConnConfig{
+		Host:     inst.Endpoint,
+		Port:     inst.Port,
+		Database: database,
+		User:     adminUser,
+		SSLMode:  inst.SSLMode,
+	}
+
+	if inst.Auth != nil && inst.Auth.Method == dbv1alpha1.AuthPassword {
+		password := os.Getenv("PGPASSWORD")
+		if password == "" {
+			return nil, fmt.Errorf("auth.method is %q; set PGPASSWORD to the %s password",
+				dbv1alpha1.AuthPassword, adminUser)
+		}
+		cfg.Password = password
+	} else {
+		tokens, err := rdsauth.New(ctx, rdsauth.Config{
+			Host:   inst.Endpoint,
+			Port:   inst.Port,
+			Region: inst.Region,
+			User:   adminUser,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("preparing IAM auth: %w", err)
+		}
+		cfg.Tokens = tokens
+	}
+
+	conn, err := postgres.Connect(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return postgres.New(conn, conn, func() error {
+		return conn.Close(context.WithoutCancel(ctx))
+	}), nil
+}
+
 // buildPlan connects to the database named in the manifest and plans against
 // its actual current state.
 func buildPlan(ctx context.Context, da *dbv1alpha1.DatabaseAccess) (*plan.Plan, engine.Engine, error) {
-	eng, err := databaseaccess.DefaultEngineFactory(ctx, da.Spec)
+	eng, err := openEngine(ctx, da)
 	if err != nil {
 		return nil, nil, err
 	}

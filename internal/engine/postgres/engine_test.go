@@ -246,3 +246,92 @@ func TestPlanHashChangesWithContent(t *testing.T) {
 		t.Error("plan hash did not change when the plan did")
 	}
 }
+
+// A greenfield owned schema must register its default privileges in the SAME
+// pass that creates it. The owner enumeration runs against the database as it
+// is before the plan, where the schema does not exist and therefore has no
+// owners at all -- so without adding the principal explicitly, the first run
+// registers nothing and only a later reconcile converges.
+func TestGreenfieldOwnedSchemaRegistersDefaultsInOnePass(t *testing.T) {
+	e := New(nil, fakeInspector{schemas: map[string]bool{}}, nil)
+	got := planText(t, e, engine.Access{
+		Database:  "appdb",
+		Principal: "app_role",
+		Namespaces: []engine.Namespace{
+			{Name: "app", Privileges: []string{"SELECT", "INSERT"}, Owner: true},
+		},
+	})
+
+	mustContain(t, got, `CREATE SCHEMA "app" AUTHORIZATION "app_role";`)
+	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT INSERT, SELECT ON TABLES TO "app_role";`)
+	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON SEQUENCES TO "app_role";`)
+}
+
+// On an existing schema the principal is still added, because the ownership
+// reassignment further down the same plan makes it the owner of relations the
+// enumeration attributed to someone else.
+func TestOwnedSchemaAddsThePrincipalToTheDefaultPrivilegeOwners(t *testing.T) {
+	e := New(nil, fakeInspector{
+		schemas: map[string]bool{"app": true},
+		owners:  map[string][]string{"app": {"legacy_owner"}},
+	}, nil)
+	got := planText(t, e, engine.Access{
+		Database:  "appdb",
+		Principal: "app_role",
+		Namespaces: []engine.Namespace{
+			{Name: "app", Privileges: []string{"SELECT"}, Owner: true},
+		},
+	})
+
+	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "legacy_owner" IN SCHEMA "app" GRANT SELECT ON TABLES TO "app_role";`)
+	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON TABLES TO "app_role";`)
+}
+
+// A consumer that does not own the schema must NOT have a default registered
+// for itself: it creates nothing there, so the entry would never fire and
+// would only add a statement that can fail on a role it cannot assume.
+func TestReadOnlyAccessDoesNotAddThePrincipalAsAnOwner(t *testing.T) {
+	e := New(nil, fakeInspector{
+		schemas: map[string]bool{"app": true},
+		owners:  map[string][]string{"app": {"legacy_owner"}},
+	}, nil)
+	got := planText(t, e, engine.Access{
+		Database:  "appdb",
+		Principal: "reporting_ro",
+		Namespaces: []engine.Namespace{
+			{Name: "app", Privileges: []string{"SELECT"}},
+		},
+	})
+
+	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "legacy_owner"`)
+	mustNotContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "reporting_ro"`)
+}
+
+// The owner list is deduplicated: a principal already enumerated as an owner
+// must not produce the same statement twice.
+func TestDefaultPrivilegeOwnersAreDeduplicated(t *testing.T) {
+	e := New(nil, fakeInspector{
+		schemas: map[string]bool{"app": true},
+		owners:  map[string][]string{"app": {"app_role"}},
+	}, nil)
+	p, err := e.BuildPlan(context.Background(), engine.Access{
+		Database:  "appdb",
+		Principal: "app_role",
+		Namespaces: []engine.Namespace{
+			{Name: "app", Privileges: []string{"SELECT"}, Owner: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	count := 0
+	for _, s := range p.Steps() {
+		if strings.Contains(s.Describe(), `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON TABLES`) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("the same default-privilege statement appears %d times, want 1", count)
+	}
+}
