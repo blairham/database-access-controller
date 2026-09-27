@@ -1,0 +1,149 @@
+# Design: DatabaseAccess
+
+**Status:** Draft — PostgreSQL implemented, MySQL and SQL Server not started
+**Code:** `internal/engine/postgres/`, `internal/controller/databaseaccess/`
+
+## Purpose
+
+Provision the data plane of a managed database — the role, schemas, grants and
+object ownership a service needs — with a controller rather than a one-shot Job.
+
+The pattern this replaces is common: a Helm-templated Kubernetes Job running a
+shell script that pipes SQL into `psql`, named by a hash of its own script body
+so that editing the script produces a new resource. It works until it does not,
+and everything below is a way it fails in practice.
+
+## What a provisioning Job cannot do
+
+**A Job is immutable on `.spec.template`.** Changing the script does not change
+the Job, and a GitOps engine reconciling it will report success while applying
+nothing — the immutable-field rejection is swallowed by a server-side diff.
+Hashing the script into the resource name is the usual workaround, and it is
+only as good as the hash: anything the hash does not cover can go stale
+indefinitely while the resource reports as synced.
+
+A controller has no immutable spec. The hash survives here as an observation in
+`status.appliedPlanHash`, useful for answering "did anything change", but it is
+no longer the mechanism that forces work to happen.
+
+**A Job runs once.** Drift introduced afterwards — a migration creating a view
+as the wrong role, a hand-run `GRANT` during an incident — persists until a
+human notices. The controller re-plans on an interval and corrects it.
+
+**A Job reports one exit code.** Provisioning SQL has statements that must not
+be fatal (see *best-effort* below), so a script ends up swallowing errors, and
+a half-applied grant then looks exactly like a fully-applied one. Those
+failures belong on the resource, which is where `status.warnings` and a
+Kubernetes event put them.
+
+**A Job cannot be inspected.** When provisioning exists only as template text,
+the sole way to learn what it will do to a database is to let it do it.
+`dbctl plan` prints the statements against the real database and writes
+nothing.
+
+## Why the plan is built by reading first
+
+The obvious way to write this SQL is server-side `DO` blocks that loop over
+`pg_class` at execution time. That hides what will happen until it has
+happened.
+
+`BuildPlan` queries first and emits one concrete statement per object, so
+`ALTER VIEW "ingest"."v_metadata" OWNER TO "ingest_app"` appears in the plan
+before anyone runs it. The tradeoff is a race: an object created between
+planning and applying is missed. It is picked up on the next reconcile, which
+is exactly the loop a Job does not have.
+
+## The failures encoded in the engine
+
+Each of these has a test in `internal/engine/postgres/`.
+
+**`ALTER DEFAULT PRIVILEGES` needs `FOR ROLE`.** Without it PostgreSQL records
+the entry against the *current* role — the provisioning role — which creates no
+objects, so the default never fires for anything. Every schema is populated by
+its owning application role, not by the provisioner. The symptom is subtle: the
+one-shot `GRANT ... ON ALL TABLES` covers everything that exists today, so
+access works, and then a migration replaces a view or a table and the new
+object silently carries no grant. Nothing re-runs, so it stays broken.
+
+**Owners come from `pg_class`, not `pg_namespace.nspowner`.** The schema owner
+is not reliably the object owner — a schema created by an admin and populated
+by an application role has two different answers. Deriving defaults from
+`nspowner` alone leaves every relation in that schema uncovered. The schema
+owner is unioned in anyway, so a greenfield schema with no relations yet still
+registers a default for whoever creates the first one.
+
+**Ownership reassignment must cover views and materialized views.** Driving it
+off `pg_tables` and `pg_sequences` covers `relkind IN ('r','p')` and `'S'` and
+silently skips `'v'` and `'m'`. This is not cosmetic: replacing a view requires
+ownership of it, so a migration doing `DROP VIEW IF EXISTS ...; CREATE VIEW` 
+fails with `must be owner of view` even when every table it reads was
+reassigned correctly. `IF EXISTS` suppresses the not-found error, not the
+permission one.
+
+**Sequence privileges are an intersection, not a pass-through.** A sequence
+accepts only `SELECT`, `UPDATE` and `USAGE`. Letting `INSERT` reach the
+sequence grant produces `invalid privilege type INSERT for sequence`, which
+aborts the transaction and takes the whole run with it.
+
+**`CREATE SCHEMA` is emitted only when the schema is absent.** A bare
+`CREATE SCHEMA IF NOT EXISTS ... AUTHORIZATION` checks the `SET ROLE`
+privilege *before* the existence short-circuit, so re-running it against a role
+the provisioner did not create fails with `must be able to SET ROLE` with
+nothing to do. PostgreSQL 16 grants a `CREATEROLE` creator `SET`/`ADMIN`
+membership on roles it makes, so provisioner-created roles are fine and
+pre-existing ones are not.
+
+**`GRANT CONNECT, CREATE ON DATABASE`, not just `CONNECT`.** PostgreSQL checks
+the `CREATE` privilege before it checks existence, so even a no-op
+`CREATE SCHEMA IF NOT EXISTS` from a service's own migrator requires it.
+
+**Tolerated errors are an explicit list.** PostgreSQL has no
+`CREATE ROLE IF NOT EXISTS`, and the usual fix is piping `psql` stderr through
+`grep -v "already exists"` — which suppresses the exit status for every error,
+not only that one. `Statement.Ignore` names the substrings a given statement
+expects and nothing else.
+
+## Why best-effort is load-bearing
+
+`ALTER DEFAULT PRIVILEGES FOR ROLE x` requires the current role to hold x's
+privileges, and a provisioning role does not necessarily hold all of them — a
+role granted with `set_option=f` cannot be assumed into. Making that fatal
+takes provisioning down for every service the moment one unreachable owner
+appears in one schema.
+
+So it is a warning. But the warning reaches the resource rather than a pod log,
+because it is the difference between "access was granted" and "access was
+granted and will survive the next migration".
+
+## Deletion
+
+`spec.revokeOnDelete` defaults to false, and the finalizer is added only when it
+is true.
+
+A role that owns objects cannot be dropped, and reassigning its objects
+elsewhere needs a human looking at the data. Even revocation is less complete
+than it appears: `ALTER DEFAULT PRIVILEGES FOR ROLE` leaves a `pg_default_acl`
+entry that is itself a dependency, so `DROP OWNED BY` is required before the
+role can go. Holding a finalizer that does nothing turns a stuck controller
+into a namespace that cannot be deleted.
+
+## Testing
+
+Unit tests prove the SQL reads correctly. Only a server proves it parses, that
+the privilege split is one PostgreSQL accepts, and that the plan is genuinely
+re-runnable — so `internal/engine/postgres/integration_test.go` runs the
+generated statements against PostgreSQL 16 behind a build tag, seeding the
+shape real databases are in: an application role owning the relations, a schema
+owned by someone else, and a view among the tables.
+
+```sh
+make test-integration
+```
+
+## Not in scope
+
+Creating the RDS instance, the Aurora cluster or the DynamoDB table. Those are
+AWS control-plane calls that Crossplane's upjet-generated `provider-aws`
+already covers, generated from the AWS API. DynamoDB has no data-plane
+principals at all — access to a table is an IAM policy — so it will never
+appear here.

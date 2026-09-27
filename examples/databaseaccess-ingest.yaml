@@ -1,0 +1,28 @@
+# A service that owns its schema and runs its own migrations.
+apiVersion: database-controller.io/v1alpha1
+kind: DatabaseAccess
+metadata:
+  name: ingest
+  namespace: ingest
+spec:
+  engine: postgres
+  instance:
+    endpoint: example.abc123.us-east-1.rds.amazonaws.com
+    port: 5432
+    database: appdb
+    region: us-east-1
+    adminUser: db_provisioner
+    sslMode: require
+  role: ingest_app
+  iamAuth: true
+  grants:
+    - schema: ingest
+      privileges:
+        - SELECT
+        - INSERT
+        - UPDATE
+        - DELETE
+      # The service runs its own migrations, so it must own what it creates --
+      # including the views, which a migration replaces with DROP VIEW plus
+      # CREATE VIEW and which therefore require ownership.
+      ownerOf: true

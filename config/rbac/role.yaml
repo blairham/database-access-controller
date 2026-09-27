@@ -1,0 +1,39 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: database-controller
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - database-controller.io
+  resources:
+  - databaseaccesses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - database-controller.io
+  resources:
+  - databaseaccesses/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - database-controller.io
+  resources:
+  - databaseaccesses/status
+  verbs:
+  - get
+  - patch
+  - update

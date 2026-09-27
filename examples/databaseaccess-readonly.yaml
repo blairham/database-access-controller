@@ -1,0 +1,26 @@
+# A read-only consumer of schemas another service owns.
+#
+# The interesting part is what the controller does that a one-shot grant does
+# not: it registers ALTER DEFAULT PRIVILEGES FOR ROLE against every role that
+# creates objects in these schemas, so a table or view added by a later
+# migration is readable without anyone re-running anything.
+apiVersion: database-controller.io/v1alpha1
+kind: DatabaseAccess
+metadata:
+  name: reporting-ro
+  namespace: reporting
+spec:
+  engine: postgres
+  instance:
+    endpoint: example.abc123.us-east-1.rds.amazonaws.com
+    database: appdb
+    region: us-east-1
+  role: reporting_ro
+  iamAuth: true
+  grants:
+    - schema: app
+      privileges:
+        - SELECT
+    - schema: ingest
+      privileges:
+        - SELECT
