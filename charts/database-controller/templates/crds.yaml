@@ -186,13 +186,17 @@ spec:
                         - name
                         type: object
                     type: object
+                    x-kubernetes-validations:
+                    - message: instance.auth.passwordSecretRef is required when auth.method
+                        is password
+                      rule: '!has(self.method) || self.method != ''password'' || has(self.passwordSecretRef)'
                   database:
                     default: appdb
                     description: Database is the database to connect to and grant
                       CONNECT on.
                     type: string
                   endpoint:
-                    description: Endpoint is the RDS endpoint hostname.
+                    description: Endpoint is the instance's hostname.
                     minLength: 1
                     type: string
                   port:
@@ -201,8 +205,11 @@ spec:
                     format: int32
                     type: integer
                   region:
-                    description: Region is the AWS region, used to sign the IAM auth
-                      token.
+                    description: |-
+                      Region is the AWS region, used to sign the IAM auth token. It is
+                      required when the admin connection authenticates with IAM -- which is
+                      the default -- and ignored entirely under password auth, where there is
+                      no token to sign and the instance need not be in AWS at all.
                     minLength: 1
                     type: string
                   sslMode:
@@ -216,8 +223,12 @@ spec:
                     type: string
                 required:
                 - endpoint
-                - region
                 type: object
+                x-kubernetes-validations:
+                - message: instance.region is required unless instance.auth.method
+                    is password
+                  rule: (has(self.auth) && has(self.auth.method) && self.auth.method
+                    == 'password') || (has(self.region) && size(self.region) > 0)
               revokeOnDelete:
                 default: false
                 description: |-

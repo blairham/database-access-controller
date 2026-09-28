@@ -34,9 +34,18 @@ type SchemaGrant struct {
 	OwnerOf bool `json:"ownerOf,omitempty"`
 }
 
-// InstanceRef identifies the RDS instance to act on.
+// InstanceRef identifies the PostgreSQL instance to act on.
+//
+// The instance may be RDS or Aurora, or a PostgreSQL running anywhere else --
+// in this cluster, on a VM, in a development rig. The work the controller does
+// once connected is identical in every case, because it is spoken in the
+// engine's own protocol; the only thing that varies is how the admin
+// connection authenticates. Region is therefore the one AWS-shaped field here,
+// and it is required only on the IAM path that uses it.
+//
+// +kubebuilder:validation:XValidation:rule="(has(self.auth) && has(self.auth.method) && self.auth.method == 'password') || (has(self.region) && size(self.region) > 0)",message="instance.region is required unless instance.auth.method is password"
 type InstanceRef struct {
-	// Endpoint is the RDS endpoint hostname.
+	// Endpoint is the instance's hostname.
 	// +kubebuilder:validation:MinLength=1
 	Endpoint string `json:"endpoint"`
 
@@ -50,9 +59,13 @@ type InstanceRef struct {
 	// +optional
 	Database string `json:"database,omitempty"`
 
-	// Region is the AWS region, used to sign the IAM auth token.
+	// Region is the AWS region, used to sign the IAM auth token. It is
+	// required when the admin connection authenticates with IAM -- which is
+	// the default -- and ignored entirely under password auth, where there is
+	// no token to sign and the instance need not be in AWS at all.
 	// +kubebuilder:validation:MinLength=1
-	Region string `json:"region"`
+	// +optional
+	Region string `json:"region,omitempty"`
 
 	// AdminUser is the PostgreSQL role the controller connects as. It needs
 	// CREATEROLE and enough membership to reassign ownership.
@@ -95,6 +108,8 @@ const (
 )
 
 // InstanceAuth selects how the admin connection authenticates.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.method) || self.method != 'password' || has(self.passwordSecretRef)",message="instance.auth.passwordSecretRef is required when auth.method is password"
 type InstanceAuth struct {
 	// Method is iam or password.
 	// +kubebuilder:default=iam
