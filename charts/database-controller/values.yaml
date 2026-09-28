@@ -140,3 +140,30 @@ logLevel: info
 
 # Extra arguments appended to the manager's command line.
 extraArgs: []
+
+# Extra environment variables on the manager container.
+#
+# This is how the AWS credential source is pointed somewhere other than the
+# ambient one -- an EKS Pod Identity agent is discovered automatically, but a
+# rig running a stand-in agent on loopback has to be told.
+extraEnv: []
+#  - name: AWS_CONTAINER_CREDENTIALS_FULL_URI
+#    value: http://127.0.0.1:1338/v1/credentials
+
+# Extra containers in the manager pod.
+#
+# The case this exists for is a credential agent. The AWS SDK refuses
+# AWS_CONTAINER_CREDENTIALS_FULL_URI on anything but loopback, so an agent
+# standing in for EKS Pod Identity cannot be its own Service -- it has to ride
+# in this pod.
+#
+# ⚠ podSecurityContext APPLIES TO THESE TOO. With runAsNonRoot: true set at pod
+# level, a sidecar whose image declares a non-numeric user fails with
+# CreateContainerConfigError ("image has non-numeric user, cannot verify user
+# is non-root") -- while the manager container starts and runs happily beside
+# it, so the pod looks half-up rather than misconfigured. Give such a sidecar
+# an explicit numeric runAsUser.
+extraContainers: []
+
+extraVolumes: []
+extraVolumeMounts: []

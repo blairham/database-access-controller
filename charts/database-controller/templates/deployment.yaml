@@ -63,6 +63,10 @@ spec:
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- with .Values.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           ports:
@@ -86,6 +90,17 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- with .Values.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

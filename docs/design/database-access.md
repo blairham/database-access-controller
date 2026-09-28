@@ -202,6 +202,38 @@ failure lands on the resource rather than being retried silently, that the
 finalizer is added only when `revokeOnDelete` asks for one, and that deletion
 runs the revoke plan before releasing it.
 
+### Verifying the IAM auth path
+
+Every suite above authenticates with a password, because a PostgreSQL in a
+container has no IAM. That leaves the production credential path -- mint a
+SigV4 RDS token, present it as the password -- covered by nothing.
+
+It can be verified without AWS. The pieces are a PostgreSQL whose 5432 is owned
+by a proxy that terminates RDS IAM auth and forwards to the real server on
+loopback, plus a credential agent serving the EKS Pod Identity contract on
+127.0.0.1. The agent has to be a SIDECAR rather than its own Service: the AWS
+SDK refuses `AWS_CONTAINER_CREDENTIALS_FULL_URI` on anything but loopback.
+`extraContainers`, `extraEnv` and `extraVolumes` in the chart exist for exactly
+this.
+
+The controller's own code is unchanged in that setup -- `rdsauth` loads
+credentials the same way it does under Pod Identity -- so what it proves is the
+real path. Verified this way: the proxy logged `postgres auth accepted ...
+tokenTTLRemaining=14m59s` and the schema, ACLs and default privileges came out
+correct.
+
+Two things to get right, both of which fail in confusing ways:
+
+- **The endpoint must be the host the token was signed against**, exactly. The
+  signature covers host:port, so a resource pointing at a Service shortname
+  while the proxy expects an FQDN is rejected as a bad token rather than as a
+  name mismatch.
+- **`spec.iamAuth` is a different thing from `instance.auth.method`**, and the
+  names invite confusion. `iamAuth` grants `rds_iam` to the TARGET role, which
+  only exists on RDS -- set it false anywhere else or the plan fails.
+  `auth.method` is how the CONTROLLER authenticates, and that is the part worth
+  testing here.
+
 ### Differential testing against the implementation being replaced
 
 Unit and integration tests prove the engine is correct on its own terms. They
