@@ -44,6 +44,24 @@ charts/database-controller/      the Helm chart; the install path
 docs/design/                     why the design is shaped this way
 ```
 
+## CI/CD
+
+`.github/workflows/ci.yml`. A push to main or a PR runs the same checks
+`make check` runs locally, plus the integration suite against a PostgreSQL 16
+service container. Nothing there needs a cluster or Docker beyond that.
+
+A **`v*` tag is what publishes an image** to `ghcr.io/blairham/database-controller`,
+built for amd64 and arm64. A push to main only validates. The tag is the
+version, so a deployed ref is always reproducible -- publishing a moving tag
+per push is what makes a rollout silently deploy the binary it already had.
+
+The release job refuses to publish when `Chart.yaml`'s `appVersion` does not
+match the tag. An unset `image.tag` falls back to `appVersion`, so a mismatch
+would install the previous binary while reporting the new version.
+
+To cut a release: bump `version` and `appVersion` in
+`charts/database-controller/Chart.yaml`, commit, then tag `vX.Y.Z`.
+
 ## Code Conventions
 
 - `gofmt`; `go vet` clean. No lint config beyond that yet.
