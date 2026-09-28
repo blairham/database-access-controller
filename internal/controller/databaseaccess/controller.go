@@ -218,7 +218,10 @@ func Access(spec dbv1alpha1.DatabaseAccessSpec) engine.Access {
 	a := engine.Access{
 		Database:  db,
 		Principal: spec.Role,
-		IAMAuth:   spec.IAMAuth,
+		// spec.GrantRdsIam is RDS-specific; engine.Access.IAMAuth is the
+		// engine-neutral spelling of the same request (rds_iam on PostgreSQL,
+		// the AWSAuthenticationPlugin on MySQL). The mapping is deliberate.
+		IAMAuth: spec.GrantRdsIam,
 	}
 	for _, g := range spec.Grants {
 		a.Namespaces = append(a.Namespaces, engine.Namespace{

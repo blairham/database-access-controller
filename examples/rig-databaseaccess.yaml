@@ -36,7 +36,7 @@ spec:
         key: password
   role: app_role
   # rds_iam does not exist outside RDS, so granting it here would fail.
-  iamAuth: false
+  grantRdsIam: false
   grants:
     - schema: app
       privileges:

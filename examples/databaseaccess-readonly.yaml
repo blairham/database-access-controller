@@ -16,7 +16,7 @@ spec:
     database: appdb
     region: us-east-1
   role: reporting_ro
-  iamAuth: true
+  grantRdsIam: true
   grants:
     - schema: app
       privileges:

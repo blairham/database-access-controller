@@ -95,6 +95,29 @@ func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, er
 	}
 
 	if a.IAMAuth {
+		// Checked while planning, not discovered mid-apply.
+		//
+		// rds_iam is created by RDS and Aurora; a self-managed PostgreSQL has
+		// no such role. Letting the GRANT find out means the plan aborts after
+		// CREATE ROLE has already run, with `role "rds_iam" does not exist` --
+		// true, but it does not say the likely cause, and the caller is left
+		// with a half-applied plan to reason about.
+		//
+		// This is the failure the grantRdsIam/auth.method naming collision
+		// invites: the two fields read as one setting, so grantRdsIam gets
+		// left at its default against a database that cannot honor it.
+		hasRdsIam, err := e.inspect.RoleExists(ctx, "rds_iam")
+		if err != nil {
+			return nil, fmt.Errorf("checking for the rds_iam role: %w", err)
+		}
+		if !hasRdsIam {
+			return nil, fmt.Errorf(
+				"grantRdsIam is set but this server has no rds_iam role, which exists only on "+
+					"RDS and Aurora: set grantRdsIam=false if %q is a self-managed PostgreSQL. "+
+					"Note this is separate from instance.auth.method, which governs how the "+
+					"controller itself connects", a.Database)
+		}
+
 		p.Add(&Statement{
 			SQL:  fmt.Sprintf("GRANT rds_iam TO %s", role),
 			Why:  "authenticate with an IAM auth token instead of a stored password",

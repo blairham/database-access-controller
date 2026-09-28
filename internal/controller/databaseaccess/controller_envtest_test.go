@@ -144,8 +144,8 @@ func TestCRDDefaultsEngineToPostgres(t *testing.T) {
 	if got.Spec.Instance.AdminUser != "db_provisioner" {
 		t.Errorf("spec.instance.adminUser = %q, want the default db_provisioner", got.Spec.Instance.AdminUser)
 	}
-	if !got.Spec.IAMAuth {
-		t.Error("spec.iamAuth = false, want the default true")
+	if !got.Spec.GrantRdsIam {
+		t.Error("spec.grantRdsIam = false, want the default true")
 	}
 	if got.Spec.RevokeOnDelete {
 		t.Error("spec.revokeOnDelete = true, want the default false")

@@ -46,7 +46,7 @@ spec:
     database: appdb
     region: us-east-1
   role: ingest_app
-  iamAuth: true
+  grantRdsIam: true
   grants:
     - schema: ingest
       privileges: [SELECT, INSERT, UPDATE, DELETE]

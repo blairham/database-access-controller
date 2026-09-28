@@ -228,11 +228,18 @@ Two things to get right, both of which fail in confusing ways:
   signature covers host:port, so a resource pointing at a Service shortname
   while the proxy expects an FQDN is rejected as a bad token rather than as a
   name mismatch.
-- **`spec.iamAuth` is a different thing from `instance.auth.method`**, and the
-  names invite confusion. `iamAuth` grants `rds_iam` to the TARGET role, which
-  only exists on RDS -- set it false anywhere else or the plan fails.
-  `auth.method` is how the CONTROLLER authenticates, and that is the part worth
-  testing here.
+- **`spec.grantRdsIam` is a different thing from `instance.auth.method`.**
+  `grantRdsIam` grants the `rds_iam` role to the SERVICE's role, so the service
+  can authenticate with a token; `auth.method` is how the CONTROLLER
+  authenticates its own admin connection. They are independent -- the
+  controller can connect with a password to a real RDS instance and still grant
+  `rds_iam`.
+
+  The field was called `iamAuth`, and against `auth.method: iam` sitting a few
+  lines above it in the same resource, the two read as one setting. Renamed
+  while `v1alpha1` and nothing was deployed; the engine keeps the neutral
+  spelling `IAMAuth`, because MySQL asks for the same thing through the
+  AWSAuthenticationPlugin.
 
 ### Differential testing against the implementation being replaced
 

@@ -73,7 +73,8 @@ func mustNotContain(t *testing.T, got, want string) {
 }
 
 func TestBuildPlanRoleAndDatabase(t *testing.T) {
-	e := New(nil, fakeInspector{}, nil)
+	// rds_iam must exist for the grant below to be plannable.
+	e := New(nil, fakeInspector{roles: map[string]bool{"rds_iam": true}}, nil)
 	got := planText(t, e, engine.Access{
 		Database:  "appdb",
 		Principal: "ingest_app",
@@ -199,7 +200,11 @@ func TestBuildPlanDoesNotCreateSchemaWhenNotOwner(t *testing.T) {
 }
 
 func TestPlanOrderingRoleBeforeGrants(t *testing.T) {
-	e := New(nil, fakeInspector{owners: map[string][]string{"app": {"app_writer"}}}, nil)
+	e := New(nil, fakeInspector{
+		// rds_iam must be present, or asking for the grant is a planning error.
+		roles:  map[string]bool{"rds_iam": true},
+		owners: map[string][]string{"app": {"app_writer"}},
+	}, nil)
 	p, err := e.BuildPlan(context.Background(), engine.Access{
 		Database:   "appdb",
 		Principal:  "reports_ro",
@@ -241,12 +246,22 @@ func TestValidateRejectsDuplicateSchemas(t *testing.T) {
 }
 
 func TestPlanHashChangesWithContent(t *testing.T) {
-	e := New(nil, fakeInspector{}, nil)
+	e := New(nil, fakeInspector{schemas: map[string]bool{"app": true}}, nil)
 	base := engine.Access{Database: "appdb", Principal: "app"}
-	p1, _ := e.BuildPlan(context.Background(), base)
 
-	base.IAMAuth = true
-	p2, _ := e.BuildPlan(context.Background(), base)
+	p1, err := e.BuildPlan(context.Background(), base)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	// Granting a schema is the representative change. IAMAuth used to be the
+	// lever here, and stopped being usable as one once asking for rds_iam
+	// against a server without that role became a planning error.
+	base.Namespaces = []engine.Namespace{{Name: "app", Privileges: []string{"SELECT"}}}
+	p2, err := e.BuildPlan(context.Background(), base)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
 
 	if p1.Hash() == p2.Hash() {
 		t.Error("plan hash did not change when the plan did")
@@ -381,4 +396,45 @@ func TestCreateRoleStillToleratesAConcurrentCreate(t *testing.T) {
 		return
 	}
 	t.Fatal("no CREATE ROLE statement in the plan")
+}
+
+// Asking for rds_iam on a server that has no such role must fail while
+// PLANNING, not part-way through applying.
+//
+// Discovered mid-apply, the plan aborts after CREATE ROLE has already run and
+// the error -- `role "rds_iam" does not exist` -- is true but says nothing
+// about the likely cause. This is the failure the grantRdsIam /
+// instance.auth.method naming collision invites.
+func TestGrantRdsIamFailsPlanningWhenTheRoleIsAbsent(t *testing.T) {
+	e := New(nil, fakeInspector{roles: map[string]bool{}}, nil)
+	_, err := e.BuildPlan(context.Background(), engine.Access{
+		Database:  "appdb",
+		Principal: "app_role",
+		IAMAuth:   true,
+	})
+	if err == nil {
+		t.Fatal("BuildPlan succeeded against a server with no rds_iam role, want an error")
+	}
+	for _, want := range []string{"rds_iam", "RDS and Aurora", "grantRdsIam=false", "instance.auth.method"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestGrantRdsIamPlansWhenTheRoleExists(t *testing.T) {
+	e := New(nil, fakeInspector{roles: map[string]bool{"rds_iam": true}}, nil)
+	got := planText(t, e, engine.Access{
+		Database:  "appdb",
+		Principal: "app_role",
+		IAMAuth:   true,
+	})
+	mustContain(t, got, `GRANT rds_iam TO "app_role";`)
+}
+
+// Nothing is checked when the grant was not asked for.
+func TestNoRdsIamCheckWhenNotRequested(t *testing.T) {
+	e := New(nil, fakeInspector{roles: map[string]bool{}}, nil)
+	got := planText(t, e, engine.Access{Database: "appdb", Principal: "app_role"})
+	mustNotContain(t, got, "rds_iam")
 }

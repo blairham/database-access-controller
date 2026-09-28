@@ -14,7 +14,7 @@ spec:
     adminUser: db_provisioner
     sslMode: require
   role: ingest_app
-  iamAuth: true
+  grantRdsIam: true
   grants:
     - schema: ingest
       privileges:

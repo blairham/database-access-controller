@@ -66,7 +66,11 @@ type InstanceRef struct {
 	// +optional
 	SSLMode string `json:"sslMode,omitempty"`
 
-	// Auth is how the controller authenticates as AdminUser.
+	// Auth is how THE CONTROLLER authenticates as AdminUser.
+	//
+	// ⚠ Not to be confused with `spec.grantRdsIam`, which grants the rds_iam
+	// role to the service's own role. This field governs one connection: the
+	// controller's.
 	// +optional
 	Auth *InstanceAuth `json:"auth,omitempty"`
 }
@@ -153,11 +157,19 @@ type DatabaseAccessSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z_][a-z0-9_]*$`
 	Role string `json:"role"`
 
-	// IAMAuth grants rds_iam to the role, so the service authenticates with an
-	// IAM token rather than a password.
+	// GrantRdsIam grants the rds_iam role to Role, so the SERVICE can
+	// authenticate to the database with an IAM token instead of a password.
+	//
+	// ⚠ THIS IS NOT HOW THE CONTROLLER AUTHENTICATES. That is
+	// `instance.auth.method`, and the two are independent: the controller can
+	// connect with a password to a real RDS instance and still grant rds_iam,
+	// or connect with an IAM token and grant nothing.
+	//
+	// The rds_iam role exists only on RDS and Aurora. Set this false against a
+	// self-managed PostgreSQL, or the grant fails.
 	// +kubebuilder:default=true
 	// +optional
-	IAMAuth bool `json:"iamAuth,omitempty"`
+	GrantRdsIam bool `json:"grantRdsIam,omitempty"`
 
 	// Grants are the per-schema privileges.
 	// +optional

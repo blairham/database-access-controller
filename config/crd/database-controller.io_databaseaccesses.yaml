@@ -70,6 +70,20 @@ spec:
                 enum:
                 - postgres
                 type: string
+              grantRdsIam:
+                default: true
+                description: |-
+                  GrantRdsIam grants the rds_iam role to Role, so the SERVICE can
+                  authenticate to the database with an IAM token instead of a password.
+
+                  ⚠ THIS IS NOT HOW THE CONTROLLER AUTHENTICATES. That is
+                  `instance.auth.method`, and the two are independent: the controller can
+                  connect with a password to a real RDS instance and still grant rds_iam,
+                  or connect with an IAM token and grant nothing.
+
+                  The rds_iam role exists only on RDS and Aurora. Set this false against a
+                  self-managed PostgreSQL, or the grant fails.
+                type: boolean
               grants:
                 description: Grants are the per-schema privileges.
                 items:
@@ -121,12 +135,6 @@ spec:
                   - schema
                   type: object
                 type: array
-              iamAuth:
-                default: true
-                description: |-
-                  IAMAuth grants rds_iam to the role, so the service authenticates with an
-                  IAM token rather than a password.
-                type: boolean
               instance:
                 description: Instance is the RDS instance to provision on.
                 properties:
@@ -137,7 +145,12 @@ spec:
                       CREATEROLE and enough membership to reassign ownership.
                     type: string
                   auth:
-                    description: Auth is how the controller authenticates as AdminUser.
+                    description: |-
+                      Auth is how THE CONTROLLER authenticates as AdminUser.
+
+                      ⚠ Not to be confused with `spec.grantRdsIam`, which grants the rds_iam
+                      role to the service's own role. This field governs one connection: the
+                      controller's.
                     properties:
                       method:
                         default: iam
