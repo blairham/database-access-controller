@@ -228,6 +228,14 @@ Two things to get right, both of which fail in confusing ways:
   signature covers host:port, so a resource pointing at a Service shortname
   while the proxy expects an FQDN is rejected as a bad token rather than as a
   name mismatch.
+- **A rig can carry `rds_iam` too.** A proxy that terminates the IAM handshake
+  makes the CONNECTION look like RDS; it does not, on its own, make the SERVER
+  look like RDS, and a stock PostgreSQL has only the `pg_*` predefined roles.
+  Where the rig also creates an `rds_iam` stub, `grantRdsIam` can stay at its
+  production value instead of being switched off for the rig -- which is the
+  point, since a setting that differs in testing is a setting that is not being
+  tested.
+
 - **`spec.grantRdsIam` is a different thing from `instance.auth.method`.**
   `grantRdsIam` grants the `rds_iam` role to the SERVICE's role, so the service
   can authenticate with a token; `auth.method` is how the CONTROLLER

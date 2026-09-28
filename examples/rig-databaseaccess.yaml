@@ -35,7 +35,14 @@ spec:
         name: rig-admin-creds
         key: password
   role: app_role
-  # rds_iam does not exist outside RDS, so granting it here would fail.
+  # False because THIS lane runs a plain PostgreSQL, which has only the pg_*
+  # predefined roles -- rds_iam is created by RDS, so the grant would fail.
+  #
+  # Not a rule about rigs generally. A rig whose PostgreSQL is fronted by a
+  # proxy that terminates RDS IAM auth may also create the role stub, and there
+  # this can stay true, which is the production-faithful setting. The engine
+  # checks for the role while planning either way, so a wrong answer here is a
+  # clear refusal rather than a half-applied plan.
   grantRdsIam: false
   grants:
     - schema: app
