@@ -23,9 +23,18 @@ helm-lint: ## Lint and render the chart, including with the toggles flipped.
 	helm template database-controller charts/database-controller --set podDisruptionBudget.maxUnavailable=1 >/dev/null
 	helm template database-controller charts/database-controller --set metrics.serviceMonitor.enabled=true >/dev/null
 
+# Exactly the paths `generate` writes. NOT all of charts/ -- most of the chart
+# is hand-maintained, so diffing the directory made any ordinary edit to
+# Chart.yaml or values.yaml report "generated files are stale". A version bump
+# is the obvious case, which means the check failed precisely when preparing a
+# release.
+GENERATED_PATHS = config apis/db/v1alpha1/zz_generated.deepcopy.go \
+                  charts/database-controller/templates/crds.yaml \
+                  charts/database-controller/templates/rbac.yaml
+
 .PHONY: check-generated
 check-generated: generate ## Fail if the generated files are out of date.
-	@git diff --exit-code -- config charts apis || \
+	@git diff --exit-code -- $(GENERATED_PATHS) || \
 		{ echo "generated files are stale -- run 'make generate' and commit"; exit 1; }
 
 .PHONY: fmt
