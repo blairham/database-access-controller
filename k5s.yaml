@@ -49,7 +49,7 @@ services:
   postgres:
     # AWS's mirror, not Docker Hub: Hub is blocked outright on some networks
     # here and the pull fails with an i/o timeout.
-    image: public.ecr.aws/docker/library/postgres:16-alpine
+    image: public.ecr.aws/docker/library/postgres:18-alpine
     ports:
       - 5432
     env:
