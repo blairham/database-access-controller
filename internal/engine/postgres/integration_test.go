@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Blair Hamilton
+// SPDX-License-Identifier: Apache-2.0
+
 //go:build integration
 
 package postgres
@@ -51,8 +54,16 @@ func seed(t *testing.T, c pgxConn, schema, appRole string) {
 		fmt.Sprintf(`CREATE ROLE %s WITH LOGIN`, QuoteIdent(appRole)),
 		fmt.Sprintf(`CREATE SCHEMA %s`, QuoteIdent(schema)),
 		fmt.Sprintf(`CREATE TABLE %s.fixtures (id bigserial PRIMARY KEY, name text)`, QuoteIdent(schema)),
-		fmt.Sprintf(`CREATE VIEW %s.v_fixture_metadata AS SELECT id, name FROM %s.fixtures`, QuoteIdent(schema), QuoteIdent(schema)),
-		fmt.Sprintf(`CREATE MATERIALIZED VIEW %s.mv_rollup AS SELECT count(*) AS n FROM %s.fixtures`, QuoteIdent(schema), QuoteIdent(schema)),
+		fmt.Sprintf(
+			`CREATE VIEW %s.v_fixture_metadata AS SELECT id, name FROM %s.fixtures`,
+			QuoteIdent(schema),
+			QuoteIdent(schema),
+		),
+		fmt.Sprintf(
+			`CREATE MATERIALIZED VIEW %s.mv_rollup AS SELECT count(*) AS n FROM %s.fixtures`,
+			QuoteIdent(schema),
+			QuoteIdent(schema),
+		),
 		fmt.Sprintf(`ALTER TABLE %s.fixtures OWNER TO %s`, QuoteIdent(schema), QuoteIdent(appRole)),
 	}
 	for _, s := range stmts {

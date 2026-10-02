@@ -1,11 +1,17 @@
 # database-controller
 
+[![CI](https://github.com/blairham/database-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/blairham/database-controller/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/blairham/database-controller/actions/workflows/codeql.yml/badge.svg)](https://github.com/blairham/database-controller/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/blairham/database-controller/badge)](https://scorecard.dev/viewer/?uri=github.com/blairham/database-controller)
+[![Go version](https://img.shields.io/github/go-mod/go-version/blairham/database-controller)](go.mod)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 Kubernetes controllers that provision the **data plane** of managed AWS data
 services: the PostgreSQL role, schemas, grants and object ownership a service
 needs inside an RDS or Aurora database.
 
 ```sh
-make check              # fmt, vet, unit tests
+make check              # vet, unit tests, envtest, chart lint
 make test-integration   # runs the generated SQL against a real PostgreSQL
 make build              # bin/manager, bin/dbctl
 ```
@@ -126,3 +132,23 @@ cmd/dbctl/              plan and apply from a terminal
 
 `docs/design/database-access.md` explains why the design is shaped this way and
 which production failures each piece exists to prevent.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Identifiers reach SQL only through
+`ValidateIdent` then `QuoteIdent`, and contributions require a signed
+[CLA](CLA.md). This project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+The controller runs DDL as an administrative role, so creating a
+`DatabaseAccess` is a privileged act — see [SECURITY.md](SECURITY.md) for what
+to restrict, and report vulnerabilities there privately, never in a public
+issue.
+
+Releases are signed with cosign — see
+[Verifying a release](SECURITY.md#verifying-a-release).
+
+## License
+
+[Apache License 2.0](LICENSE). See [NOTICE](NOTICE).

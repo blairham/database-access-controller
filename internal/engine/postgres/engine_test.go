@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Blair Hamilton
+// SPDX-License-Identifier: Apache-2.0
+
 package postgres
 
 import (
@@ -109,9 +112,21 @@ func TestBuildPlanRegistersDefaultPrivilegesPerOwningRole(t *testing.T) {
 		},
 	})
 
-	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "rds_superuser" IN SCHEMA "app" GRANT SELECT ON TABLES TO "reporting_ro";`)
-	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_writer" IN SCHEMA "app" GRANT SELECT ON TABLES TO "reporting_ro";`)
-	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_writer" IN SCHEMA "app" GRANT SELECT ON SEQUENCES TO "reporting_ro";`)
+	mustContain(
+		t,
+		got,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "rds_superuser" IN SCHEMA "app" GRANT SELECT ON TABLES TO "reporting_ro";`,
+	)
+	mustContain(
+		t,
+		got,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "app_writer" IN SCHEMA "app" GRANT SELECT ON TABLES TO "reporting_ro";`,
+	)
+	mustContain(
+		t,
+		got,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "app_writer" IN SCHEMA "app" GRANT SELECT ON SEQUENCES TO "reporting_ro";`,
+	)
 }
 
 func TestDefaultPrivilegeStatementsAreBestEffort(t *testing.T) {
@@ -284,8 +299,16 @@ func TestGreenfieldOwnedSchemaRegistersDefaultsInOnePass(t *testing.T) {
 	})
 
 	mustContain(t, got, `CREATE SCHEMA "app" AUTHORIZATION "app_role";`)
-	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT INSERT, SELECT ON TABLES TO "app_role";`)
-	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON SEQUENCES TO "app_role";`)
+	mustContain(
+		t,
+		got,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT INSERT, SELECT ON TABLES TO "app_role";`,
+	)
+	mustContain(
+		t,
+		got,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON SEQUENCES TO "app_role";`,
+	)
 }
 
 // On an existing schema the principal is still added, because the ownership
@@ -304,8 +327,16 @@ func TestOwnedSchemaAddsThePrincipalToTheDefaultPrivilegeOwners(t *testing.T) {
 		},
 	})
 
-	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "legacy_owner" IN SCHEMA "app" GRANT SELECT ON TABLES TO "app_role";`)
-	mustContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON TABLES TO "app_role";`)
+	mustContain(
+		t,
+		got,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "legacy_owner" IN SCHEMA "app" GRANT SELECT ON TABLES TO "app_role";`,
+	)
+	mustContain(
+		t,
+		got,
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON TABLES TO "app_role";`,
+	)
 }
 
 // A consumer that does not own the schema must NOT have a default registered
@@ -348,7 +379,10 @@ func TestDefaultPrivilegeOwnersAreDeduplicated(t *testing.T) {
 
 	count := 0
 	for _, s := range p.Steps() {
-		if strings.Contains(s.Describe(), `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON TABLES`) {
+		if strings.Contains(
+			s.Describe(),
+			`ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON TABLES`,
+		) {
 			count++
 		}
 	}

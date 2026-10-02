@@ -16,7 +16,7 @@ needs inside an RDS or Aurora database.
 ## Quick Reference
 
 ```sh
-make check              # fmt, vet, unit tests -- what CI runs
+make check              # vet, unit tests, envtest, chart lint -- CI's non-database half
 make test               # unit tests, no database needed
 make test-envtest       # controller against a real kube-apiserver, no cluster
 make test-integration   # runs generated SQL against a real PostgreSQL 16
@@ -25,6 +25,7 @@ make generate           # deepcopy, CRDs, RBAC + sync them into the chart
 make helm-lint          # lint and render the chart with the toggles flipped
 make check-generated    # fail if the generated files are stale
 make build              # bin/manager, bin/dbctl
+make fmt                # gofumpt
 make pg-down            # stop the test database
 ```
 
@@ -46,25 +47,44 @@ docs/design/                     why the design is shaped this way
 
 ## CI/CD
 
-`.github/workflows/ci.yml`. A push to main or a PR runs the same checks
-`make check` runs locally, plus the integration suite against a PostgreSQL 16
-service container. Nothing there needs a cluster or Docker beyond that.
+`.github/workflows/ci.yml` holds everything that gates a merge. Jobs (their
+names are the required checks): **Pre-commit** (the hooks below, via
+`blairham/go-pre-commit`), **Detect changed files** (skips the code jobs for
+prose-only PRs without leaving a required check pending), **Build and test**
+(build, `check-generated`, vet across all build tags, `go test -race`,
+envtest), **PostgreSQL integration** (a PostgreSQL 16 service container),
+**Build image** and **Helm chart**. `codeql.yml` and `scorecard.yml` run
+alongside. Every action is pinned to a commit SHA with a `# vX.Y.Z` comment;
+Dependabot moves the pins.
 
-A **`v*` tag is what publishes an image** to `ghcr.io/blairham/database-controller`,
-built for amd64 and arm64. A push to main only validates. The tag is the
-version, so a deployed ref is always reproducible -- publishing a moving tag
-per push is what makes a rollout silently deploy the binary it already had.
+A **`v*` tag is what publishes**: `goreleaser.yml` runs GoReleaser, which
+pushes `ghcr.io/blairham/database-controller:<version>` (amd64 and arm64,
+built from the same binaries as the archives) and a `dbctl` archive per
+platform, and signs both with keyless cosign (see `SECURITY.md`). A push to
+main only validates. The tag is the version, so a deployed ref is always
+reproducible -- publishing a moving tag per push is what makes a rollout
+silently deploy the binary it already had.
 
-The release job refuses to publish when `Chart.yaml`'s `appVersion` does not
-match the tag. An unset `image.tag` falls back to `appVersion`, so a mismatch
-would install the previous binary while reporting the new version.
+The release workflow refuses to publish when `Chart.yaml`'s `appVersion` does
+not match the tag. An unset `image.tag` falls back to `appVersion`, so a
+mismatch would install the previous binary while reporting the new version.
 
 To cut a release: bump `version` and `appVersion` in
-`charts/database-controller/Chart.yaml`, commit, then tag `vX.Y.Z`.
+`charts/database-controller/Chart.yaml`, commit, then tag `vX.Y.Z` (signed).
 
 ## Code Conventions
 
-- `gofmt`; `go vet` clean. No lint config beyond that yet.
+- Formatting and lint run as **pre-commit hooks**, never by hand:
+  golangci-lint v2 (config in `.golangci.yml`, formatters gofumpt, gci,
+  goimports, golines) pinned in go.mod's `tool` block and in
+  `.pre-commit-config.yaml` -- move the two together. The linter set was
+  adopted after the code was written and the hook reports only what a commit
+  introduces, so an older finding surfaces when its lines are next touched.
+- Every `.go` file starts with the two-line SPDX header (`hack/boilerplate.go.txt`,
+  which controller-gen also stamps onto generated files). The
+  `check-license-headers` hook fails without it.
+- Go is pinned once: `.tool-versions` and go.mod's `go` directive must match
+  (the `check-go-version-sync` hook enforces it).
 - **Comments explain why, not what.** Nearly every non-obvious line here exists
   because of a specific production failure. When you touch such a line, keep the
   comment and the test that pins it, or explain in the PR why the failure can no

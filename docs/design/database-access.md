@@ -85,7 +85,7 @@ registers a default for whoever creates the first one.
 **Ownership reassignment must cover views and materialized views.** Driving it
 off `pg_tables` and `pg_sequences` covers `relkind IN ('r','p')` and `'S'` and
 silently skips `'v'` and `'m'`. This is not cosmetic: replacing a view requires
-ownership of it, so a migration doing `DROP VIEW IF EXISTS ...; CREATE VIEW` 
+ownership of it, so a migration doing `DROP VIEW IF EXISTS ...; CREATE VIEW`
 fails with `must be owner of view` even when every table it reads was
 reassigned correctly. `IF EXISTS` suppresses the not-found error, not the
 permission one.

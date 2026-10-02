@@ -1,0 +1,35 @@
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 10
+    groups:
+      # aws-sdk-go-v2 releases its modules together; one PR, not six.
+      aws-sdk:
+        patterns: ["github.com/aws/aws-sdk-go-v2*"]
+      # client-go, api and apimachinery must move in lockstep with each other
+      # and with controller-runtime; split, they fail to build.
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    ignore:
+      # The builder tracks the Go line pinned in go.mod (1.26.x). A new Go
+      # minor (1.26 -> 1.27) moves go.mod, .tool-versions and every sibling
+      # repo together, by hand — not as a lone Dockerfile bump. Digest and
+      # patch updates still come through.
+      - dependency-name: golang
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor

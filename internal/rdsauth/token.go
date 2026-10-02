@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Blair Hamilton
+// SPDX-License-Identifier: Apache-2.0
+
 // Package rdsauth mints the short-lived IAM authentication tokens used to
 // connect to RDS and Aurora as a database user, with no password anywhere.
 //

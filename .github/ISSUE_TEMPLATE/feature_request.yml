@@ -1,0 +1,22 @@
+name: Feature request
+description: An engine, privilege or provisioning step database-controller should support
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        database-controller provisions **inside** a database — roles, schemas,
+        grants, ownership. Creating the database itself is a control-plane call
+        that Crossplane's provider-aws already covers, so it is out of scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you need provisioned?
+      description: The access a service needs, not the feature you have in mind.
+    validations:
+      required: true
+  - type: input
+    id: engine
+    attributes:
+      label: Which engine?
+      description: PostgreSQL / Aurora PostgreSQL today; MySQL and SQL Server are planned.

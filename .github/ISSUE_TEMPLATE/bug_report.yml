@@ -1,0 +1,55 @@
+name: Bug report
+description: Something database-controller did that it should not have
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **If a DatabaseAccess granted more than it
+        asked for, or a field reached SQL unquoted, that is a security issue** —
+        report it privately through Security → Report a vulnerability, not here.
+
+        Never paste passwords, IAM tokens or real endpoints. Redact them.
+  - type: input
+    id: version
+    attributes:
+      label: database-controller version or commit
+    validations:
+      required: true
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part?
+      options:
+        - controller (reconcile, status, finalizer)
+        - dbctl
+        - PostgreSQL engine (generated SQL)
+        - RDS IAM authentication
+        - Helm chart
+        - container image
+    validations:
+      required: true
+  - type: input
+    id: engine
+    attributes:
+      label: Database engine and version
+      description: e.g. RDS PostgreSQL 16.4, Aurora PostgreSQL 15.7, a local postgres:16
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: The DatabaseAccess (redacted)
+      render: yaml
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect instead?
+      description: '`dbctl plan` output for the same spec is the most useful thing you can paste.'
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Controller logs
+      render: shell

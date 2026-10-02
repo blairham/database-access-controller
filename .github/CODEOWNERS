@@ -1,0 +1,4 @@
+# Every change needs the maintainer's review. internal/engine/ is where a CRD
+# field becomes SQL run as a privileged role.
+*                 @blairham
+/internal/engine/ @blairham

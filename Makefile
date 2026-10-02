@@ -8,7 +8,7 @@ all: generate fmt vet test build
 
 .PHONY: generate
 generate: ## Regenerate deepcopy, CRDs, RBAC, and sync them into the chart.
-	$(GO) tool controller-gen object:headerFile=/dev/null paths=./apis/...
+	$(GO) tool controller-gen object:headerFile=hack/boilerplate.go.txt paths=./apis/...
 	$(GO) tool controller-gen crd paths=./apis/... output:crd:artifacts:config=config/crd
 	$(GO) tool controller-gen rbac:roleName=database-controller paths=./internal/... output:rbac:artifacts:config=config/rbac
 	./hack/sync-chart.sh
@@ -38,8 +38,8 @@ check-generated: generate ## Fail if the generated files are out of date.
 		{ echo "generated files are stale -- run 'make generate' and commit"; exit 1; }
 
 .PHONY: fmt
-fmt:
-	$(GO) fmt ./...
+fmt: ## Format with gofumpt (the commit hook also runs the configured formatters).
+	$(GO) tool gofumpt -w .
 
 .PHONY: vet
 vet:
@@ -118,7 +118,7 @@ docker-build:
 	docker build -t $(IMG) .
 
 .PHONY: check
-check: fmt vet test test-envtest helm-lint ## What CI runs. No database or cluster needed.
+check: vet test test-envtest helm-lint ## The non-database half of CI. No database or cluster needed.
 
 .PHONY: help
 help:

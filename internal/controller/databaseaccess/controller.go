@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Blair Hamilton
+// SPDX-License-Identifier: Apache-2.0
+
 // Package databaseaccess reconciles DatabaseAccess resources against a
 // database's data plane.
 package databaseaccess
@@ -173,7 +176,12 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, da *dbv1alpha1.Databas
 
 // fail records the error on the resource and returns it so the work queue
 // retries with backoff.
-func (r *Reconciler) fail(ctx context.Context, da *dbv1alpha1.DatabaseAccess, reason string, cause error) (ctrl.Result, error) {
+func (r *Reconciler) fail(
+	ctx context.Context,
+	da *dbv1alpha1.DatabaseAccess,
+	reason string,
+	cause error,
+) (ctrl.Result, error) {
 	setCondition(da, metav1.Condition{
 		Type:               ConditionReady,
 		Status:             metav1.ConditionFalse,

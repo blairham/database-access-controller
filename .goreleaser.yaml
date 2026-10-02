@@ -1,0 +1,158 @@
+version: 2
+
+# GoReleaser configuration for database-controller
+# See: https://goreleaser.com
+project_name: database-controller
+
+builds:
+  # The controller runs in a cluster: Linux only, and in no archive — it exists
+  # to be copied into the image.
+  - id: manager
+    binary: manager
+    main: ./cmd/manager
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+  # dbctl plans and applies from a terminal, so it ships for laptops too.
+  - id: dbctl
+    binary: dbctl
+    main: ./cmd/dbctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+archives:
+  - id: dbctl
+    ids:
+      - dbctl
+    formats:
+      - tar.gz
+    # this name template makes the OS and Arch compatible with the results of uname.
+    name_template: >-
+      dbctl_ {{- title .Os }}_ {{- if eq .Arch "amd64" }}x86_64 {{- else }}{{ .Arch }}{{ end }}
+
+# macOS signing + notarization, matching the sibling repos. Gated on isEnvSet,
+# so releases still succeed unsigned when the secrets are absent.
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids:
+        - dbctl
+      sign:
+        certificate: "{{.Env.MACOS_SIGN_P12}}"
+        password: "{{.Env.MACOS_SIGN_PASSWORD}}"
+      notarize:
+        issuer_id: "{{.Env.MACOS_NOTARY_ISSUER_ID}}"
+        key_id: "{{.Env.MACOS_NOTARY_KEY_ID}}"
+        key: "{{.Env.MACOS_NOTARY_KEY}}"
+        wait: true
+
+# The image the Helm chart pulls: ghcr.io/blairham/database-controller:<version>.
+#
+# dockers_v2 traps: --snapshot builds per-arch and never the index, so verify
+# against a real registry; the release workflow needs
+# docker/setup-buildx-action, because the runner's default driver cannot push a
+# manifest list; SBOM attestation is on by default, so it is off.
+dockers_v2:
+  - id: image
+    ids:
+      - manager
+      - dbctl
+    images:
+      - ghcr.io/blairham/database-controller
+    dockerfile: Dockerfile
+    flags:
+      - --target=release
+    # arm64 as well as amd64: an unpinned pod that lands on the other arch
+    # cannot pull an image built for one platform.
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    sbom: false
+    # `latest` moves only on a real release, never a prerelease tag. The
+    # version tag comes off the git tag, so it is immutable by construction.
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    labels:
+      org.opencontainers.image.title: database-controller
+      org.opencontainers.image.description: Provisions roles, schemas and grants inside RDS and Aurora PostgreSQL
+      org.opencontainers.image.url: https://github.com/blairham/database-controller
+      org.opencontainers.image.source: https://github.com/blairham/database-controller
+      org.opencontainers.image.licenses: Apache-2.0
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+
+checksum:
+  name_template: 'checksums.txt'
+
+# Keyless cosign signatures, from the release workflow's own GitHub identity:
+# no key to store or leak, and the certificate names the exact workflow and tag
+# that produced the release. Signing checksums.txt covers every archive, since
+# it lists each one's digest. See SECURITY.md for how to verify.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+
+# Each published image, by digest. cosign attaches the signature to the image
+# in ghcr.io.
+docker_signs:
+  - cmd: cosign
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - "--yes"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  draft: false
+  replace_existing_draft: true
+  target_commitish: "{{ .Commit }}"
+  prerelease: auto
+  mode: replace
+  footer: |
+    **Full Changelog**: https://github.com/blairham/database-controller/compare/{{ .PreviousTag }}...{{ .Tag }}

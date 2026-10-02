@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Blair Hamilton
+// SPDX-License-Identifier: Apache-2.0
+
 // Command dbctl runs the controllers' planning logic from a terminal.
 //
 // It exists because the thing it replaces could not be inspected. Provisioning

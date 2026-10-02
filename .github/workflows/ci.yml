@@ -1,70 +1,131 @@
-name: ci
+name: CI
 
-# A `v*` tag is what publishes an image; a push to main only validates. The tag
-# IS the version, so a deployed ref is always reproducible -- the alternative,
-# publishing a moving tag per push, is what makes a rollout silently deploy the
-# binary it already had.
+# One workflow holds everything that gates a merge, so there is one file to
+# read and one check to require. Splitting pre-commit or the tests into their
+# own workflow buys nothing and costs a second place to keep in sync.
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    # A squash merge lands a tree no pull request ever built — the branch was
+    # tested before the squash, and `main` may have moved under it since — so
+    # the merge result gets its own run rather than inheriting the branch's
+    # green tick.
     branches: [main]
 
 permissions:
   contents: read
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE: ghcr.io/${{ github.repository }}
+concurrency:
+  # A superseded push is not worth finishing; only the newest commit matters.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  check:
+  # Pre-commit is the lint surface: the same pinned golangci hooks run locally
+  # as the commit gate and here as the merge gate. No standalone
+  # golangci-lint-action — a parallel lint config drifts. It is also the only
+  # job that looks at *every* file rather than at Go: trailing whitespace,
+  # secrets, conflict markers, the toolchain pin.
+  pre-commit:
+    name: Pre-commit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # Single source of truth: go.mod. A hardcoded version here drifts
-          # from the toolchain the code is actually written against.
           go-version-file: go.mod
+          check-latest: true
+          # go-mod-tidy-repo resolves the whole graph; uncached it is slow and flaky.
           cache: true
+      - name: Run pre-commit hooks
+        uses: blairham/go-pre-commit@5788df636d2726ba06d337393503a7fe6b3451c2 # v4.6.7
 
-      - uses: azure/setup-helm@v4
+  # Gating happens inside the jobs, never with a workflow-level `paths:`
+  # filter: a required check that never runs reports as *pending forever*
+  # rather than as passed, which makes a docs-only pull request unmergeable.
+  # Anything unrecognised counts as code, so when this is wrong it is wrong in
+  # the direction of running the tests.
+  changes:
+    name: Detect changed files
+    needs: pre-commit
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: v3.16.2
-
-      - name: Verify the generated files are current
-        # controller-gen owns the CRD and the ClusterRole rules, and
-        # hack/sync-chart.sh copies them into the chart. Stale output means the
-        # chart asks for permissions the controller does not have, or ships a
-        # schema the types no longer match -- both of which fail at runtime
-        # rather than in review.
-        run: make check-generated
-
-      - name: Format and vet
+          fetch-depth: 0 # the diff needs the base commit, not just HEAD
+      - id: filter
+        name: Is any of this code?
+        env:
+          # On a merge to main there is no pull request; `before` is the commit
+          # main pointed at, which makes the diff the merge itself.
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
-          make fmt vet
-          git diff --exit-code || { echo "::error::gofmt made changes; run 'make fmt' and commit"; exit 1; }
+          code=false
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "push to $GITHUB_REF_NAME — running everything"
+            code=true
+          elif ! git cat-file -e "$BASE" 2>/dev/null; then
+            # No usable base commit — a force push, or a shallow fetch that did
+            # not reach it. `git diff` would fail here and print nothing, and an
+            # empty diff is indistinguishable from "only prose changed", so this
+            # would silently skip every test. The safe answer is to run them.
+            echo "base commit $BASE is not present — running everything"
+            code=true
+          else
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              case "$f" in
+                docs/*|*.md|LICENSE|LICENSE.*|*.png|*.jpg|*.gif|*.svg) ;; # prose
+                *) code=true; break ;;
+              esac
+            done <<<"$(git diff --name-only "$BASE"...HEAD)"
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "changed files are $([ "$code" = true ] && echo 'code — full run' || echo 'prose only — skipping the code jobs')"
 
-      - name: Unit tests
-        run: go test ./... -race -coverprofile=cover.out
-
-      - name: Controller tests against a real API server
-        # envtest downloads a kube-apiserver and etcd; no cluster, no Docker.
-        run: make test-envtest
-
-      - name: Lint and render the chart
-        run: make helm-lint
-
+  test:
+    name: Build and test
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code == 'true'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: needs.changes.outputs.code == 'true'
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
       - name: Build both binaries
+        if: needs.changes.outputs.code == 'true'
         run: make build
+      # controller-gen owns the CRD and the ClusterRole rules, and
+      # hack/sync-chart.sh copies them into the chart. Stale output means the
+      # chart asks for permissions the controller does not have, or ships a
+      # schema the types no longer match -- both of which fail at runtime
+      # rather than in review.
+      - name: Verify the generated files are current
+        if: needs.changes.outputs.code == 'true'
+        run: make check-generated
+      - run: go vet -tags 'integration envtest equivalence' ./...
+        if: needs.changes.outputs.code == 'true'
+      - name: Unit tests
+        if: needs.changes.outputs.code == 'true'
+        run: go test -race ./...
+      # envtest downloads a kube-apiserver and etcd; no cluster, no Docker.
+      - name: Controller tests against a real API server
+        if: needs.changes.outputs.code == 'true'
+        run: make test-envtest
 
   # The integration suite needs a real PostgreSQL, because unit tests cannot
   # tell you whether the generated DDL parses or whether the privilege split is
   # one PostgreSQL accepts.
   integration:
+    name: PostgreSQL integration
+    needs: changes
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -79,64 +140,53 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code == 'true'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
+          check-latest: true
           cache: true
       - name: Run the generated SQL against PostgreSQL 16
+        if: needs.changes.outputs.code == 'true'
         env:
           PGTEST_DSN: postgres://postgres:test@127.0.0.1:5433/postgres
-        run: go test -tags integration ./internal/engine/postgres/ -v
+        run: go test -race -tags integration ./internal/engine/postgres/ -v
 
-  release:
-    # Only a tag publishes.
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [check, integration]
+  # The controller is consumed as a CONTAINER, so a Dockerfile that stopped
+  # building would break every install while the Go tests stayed green. Build
+  # only; a v* tag publishes (goreleaser.yml). No `if:` needed: a job that
+  # `needs` a skipped job is itself skipped.
+  image:
+    name: Build image
+    needs: [changes, test]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Derive the version from the tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code == 'true'
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: needs.changes.outputs.code == 'true'
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        if: needs.changes.outputs.code == 'true'
         with:
           context: .
-          # arm64 as well as amd64: the rigs run on Apple silicon, and an
-          # unpinned pod that lands on the other arch cannot pull an image
-          # built for one platform.
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
-            ${{ env.IMAGE }}:latest
-          # Immutable by construction: the version tag comes off the git tag.
-          provenance: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          push: false
+          tags: database-controller:ci
 
-      - name: Confirm the chart points at what was just published
-        # The chart's appVersion is what an unset image.tag falls back to, so a
-        # release whose chart still names the previous version installs the old
-        # binary while reporting the new one.
-        run: |
-          chart_version="$(grep '^appVersion:' charts/database-controller/Chart.yaml | awk '{print $2}' | tr -d '"')"
-          if [ "$chart_version" != "${{ steps.version.outputs.version }}" ]; then
-            echo "::error::Chart.yaml appVersion is $chart_version but the tag is ${{ steps.version.outputs.version }}; bump the chart and re-tag"
-            exit 1
-          fi
+  # The chart is the install path: a template error ships as a failed install
+  # on someone else's cluster. `make helm-lint` lints it and renders it with
+  # each toggle flipped, so a branch that only runs under non-default values is
+  # exercised too.
+  charts:
+    name: Helm chart
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code == 'true'
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        if: needs.changes.outputs.code == 'true'
+      - name: Lint and render
+        if: needs.changes.outputs.code == 'true'
+        run: make helm-lint

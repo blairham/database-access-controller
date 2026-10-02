@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Blair Hamilton
+// SPDX-License-Identifier: Apache-2.0
+
 //go:build envtest
 
 // Package databaseaccess's controller tests run against a real Kubernetes API

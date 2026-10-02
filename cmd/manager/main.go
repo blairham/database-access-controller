@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Blair Hamilton
+// SPDX-License-Identifier: Apache-2.0
+
 // Command manager runs the provisioner controllers.
 //
 // One binary hosts this repo's controllers, which all provision the data plane

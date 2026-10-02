@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Blair Hamilton
+// SPDX-License-Identifier: Apache-2.0
+
 package postgres
 
 import (
@@ -115,7 +118,8 @@ func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, er
 				"grantRdsIam is set but this server has no rds_iam role, which exists only on "+
 					"RDS and Aurora: set grantRdsIam=false if %q is a self-managed PostgreSQL. "+
 					"Note this is separate from instance.auth.method, which governs how the "+
-					"controller itself connects", a.Database)
+					"controller itself connects", a.Database,
+			)
 		}
 
 		p.Add(&Statement{
@@ -218,7 +222,13 @@ func (e *Engine) addNamespace(ctx context.Context, p *plan.Plan, principal strin
 // net then never fires anywhere, in any schema, and the only thing granting
 // access is the one-shot GRANT ON ALL TABLES above, which does not survive the
 // next migration that replaces an object.
-func (e *Engine) addDefaultPrivileges(ctx context.Context, p *plan.Plan, principal, schema, objType string, privs []string, principalWillOwn bool) error {
+func (e *Engine) addDefaultPrivileges(
+	ctx context.Context,
+	p *plan.Plan,
+	principal, schema, objType string,
+	privs []string,
+	principalWillOwn bool,
+) error {
 	owners, err := e.inspect.ObjectOwners(ctx, schema)
 	if err != nil {
 		return fmt.Errorf("enumerating owners of schema %q: %w", schema, err)
@@ -253,8 +263,11 @@ func (e *Engine) addDefaultPrivileges(ctx context.Context, p *plan.Plan, princip
 		p.Add(&Statement{
 			SQL: fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %s GRANT %s ON %s TO %s",
 				QuoteIdent(owner), QuoteIdent(schema), Join(privs), objType, QuoteIdent(principal)),
-			Why: fmt.Sprintf("future %s created by %s stay reachable; FOR ROLE is required or the default binds to the provisioner, which creates nothing",
-				objType, owner),
+			Why: fmt.Sprintf(
+				"future %s created by %s stay reachable; FOR ROLE is required or the default binds to the provisioner, which creates nothing",
+				objType,
+				owner,
+			),
 			// ALTER DEFAULT PRIVILEGES FOR ROLE x requires the admin role to
 			// hold x's privileges, and it does not hold all of them. Fatal here
 			// would take provisioning down for every service the moment one

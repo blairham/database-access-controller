@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Blair Hamilton
+// SPDX-License-Identifier: Apache-2.0
+
 // Package plan models provisioning as an ordered list of steps that can be
 // printed before they are run.
 //

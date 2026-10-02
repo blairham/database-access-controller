@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Blair Hamilton
+// SPDX-License-Identifier: Apache-2.0
+
 // Package engine defines what a database engine must implement to be
 // provisionable by the DatabaseAccess controller.
 //
