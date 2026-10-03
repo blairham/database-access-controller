@@ -21,6 +21,8 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hashes.outputs.hashes }}
     permissions:
       contents: write # the GitHub release and its assets
       # The image goes to ghcr.io in the same run — see dockers_v2 in
@@ -102,3 +104,29 @@ jobs:
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+
+      # checksums.txt is already `<sha256>  <file>` per archive, the subject
+      # format the provenance generator takes; base64 keeps it one line.
+      - name: Hash the release archives for provenance
+        id: hashes
+        run: echo "hashes=$(base64 -w0 dist/checksums.txt)" >> "$GITHUB_OUTPUT"
+
+  # SLSA Build L3 provenance for every archive GoReleaser published, generated
+  # in the generator's own isolated job and attached to the release as
+  # database-controller.intoto.jsonl. Verify with slsa-verifier (see
+  # SECURITY.md).
+  #
+  # Referenced by tag, not SHA: the generator verifies its own ref and does not
+  # support hash pinning, so this is the one unpinned `uses:` in the repo.
+  provenance:
+    needs: release
+    permissions:
+      actions: read # the generator reads this workflow run
+      id-token: write # keyless signing of the provenance
+      contents: write # upload the .intoto.jsonl to the release
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.release.outputs.hashes }}
+      upload-assets: true
+      upload-tag-name: ${{ inputs.tag || github.ref_name }}
+      provenance-name: database-controller.intoto.jsonl
