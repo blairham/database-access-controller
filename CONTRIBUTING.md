@@ -44,7 +44,9 @@ including that no employer holds rights to it.
 - `pre-commit install` once per checkout. The hooks format, lint, scan for
   secrets and check for vulnerable dependencies on every commit; never bypass
   them with `--no-verify`.
-- `go test -race ./...` must pass. A bug in plan construction gets a unit
+- `go test -race ./...` must pass. **New functionality comes with tests in
+  the same pull request**, and a pull request that adds behavior without them
+  will not be merged. A bug in plan construction gets a unit
   test; a bug about what PostgreSQL accepts gets an integration test
   (`make test-integration`, needs Docker); a bug in the reconcile contract or
   the CRD schema gets an envtest (`make test-envtest`).
