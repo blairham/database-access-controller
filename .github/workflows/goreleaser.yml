@@ -118,6 +118,40 @@ jobs:
         with:
           subject-checksums: dist/checksums.txt
 
+      # The image gets provenance too, attached to ghcr.io beside its cosign
+      # signature so `gh attestation verify oci://...` finds it. The subject is
+      # the multi-arch index digest — what a tag resolves to and what a pull by
+      # tag verifies against — read from GoReleaser's own record of what it
+      # pushed rather than re-resolved from the registry, where a tag can move.
+      # dockers_v2 records the index as "Docker Image", one entry per tag, all
+      # sharing a digest; a legacy docker_manifests config would record it as
+      # "Docker Manifest", so prefer that if it ever appears. Anything but
+      # exactly one digest fails the release rather than attesting the wrong
+      # thing or nothing.
+      - name: Find the image digest
+        id: image
+        run: |
+          set -euo pipefail
+          digests="$(jq -r '
+            [.[] | select(.name | startswith("ghcr.io/blairham/database-controller:"))]
+            | (map(select(.type == "Docker Manifest")) | if length > 0 then . else empty end)
+              // map(select(.type == "Docker Image"))
+            | map(.extra.Digest // empty) | unique | .[]
+          ' dist/artifacts.json)"
+          count="$(printf '%s' "$digests" | grep -c '^sha256:[0-9a-f]\{64\}$' || true)"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::expected one image digest in dist/artifacts.json, found $count: ${digests:-none}"
+            exit 1
+          fi
+          echo "digest=$digests" >> "$GITHUB_OUTPUT"
+
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/blairham/database-controller
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
       - name: Attach the provenance to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
