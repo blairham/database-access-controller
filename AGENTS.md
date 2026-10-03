@@ -37,6 +37,7 @@ internal/plan/                   engine-neutral Plan: Describe, Apply, Hash
 internal/engine/                 the Engine interface each database implements
 internal/engine/postgres/        PostgreSQL statements, inspection, plan building
 internal/rdsauth/                IAM auth tokens for RDS and Aurora
+internal/rdsca/                  embedded RDS CA bundle (hack/update-rds-ca.sh refreshes it)
 internal/controller/             reconcilers
 cmd/manager/                     one binary; --controllers selects which run
 cmd/dbctl/              plan and apply from a terminal

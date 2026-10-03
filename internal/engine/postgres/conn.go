@@ -5,11 +5,18 @@ package postgres
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/blairham/database-controller/internal/rdsca"
 )
+
+// rootCAs supplies the CAs a verify-ca or verify-full connection trusts. A
+// variable so tests can substitute a CA they control.
+var rootCAs = rdsca.Pool
 
 // TokenSource mints the password used for an IAM-authenticated connection.
 type TokenSource interface {
@@ -26,7 +33,8 @@ type ConnConfig struct {
 
 	// Tokens supplies the IAM auth token used as the password. RDS rejects a
 	// plaintext connection for an IAM user, so SSLMode must stay at require or
-	// stricter when this is set.
+	// stricter when this is set -- and since the token is a bearer credential,
+	// anything short of verify-full hands it to whoever answers the connection.
 	//
 	// Exactly one of Tokens and Password is set.
 	Tokens TokenSource
@@ -54,10 +62,11 @@ func Connect(ctx context.Context, cfg ConnConfig) (*Conn, error) {
 	}
 	sslMode := cfg.SSLMode
 	if sslMode == "" {
-		// RDS refuses IAM authentication over an unencrypted connection, and
-		// the token is a bearer credential, so there is no weaker default to
-		// fall back to.
-		sslMode = "require"
+		// verify-full, not require: require encrypts but accepts any
+		// certificate, so anyone able to answer on the endpoint's address
+		// receives the admin credential. RDS certificates verify against the
+		// embedded RDS CAs (see rootCAs).
+		sslMode = "verify-full"
 	}
 
 	password := cfg.Password
@@ -80,6 +89,13 @@ func Connect(ctx context.Context, cfg ConnConfig) (*Conn, error) {
 		return nil, fmt.Errorf("parsing connection config: %w", err)
 	}
 	pgCfg.Password = password
+	if sslMode == "verify-ca" || sslMode == "verify-full" {
+		pool, caErr := rootCAs()
+		if caErr != nil {
+			return nil, fmt.Errorf("loading CA certificates: %w", caErr)
+		}
+		trust(pgCfg, pool)
+	}
 
 	conn, err := pgx.ConnectConfig(ctx, pgCfg)
 	if err != nil {
@@ -152,4 +168,19 @@ func (c *Conn) RelationsNotOwnedBy(ctx context.Context, schema, owner string) ([
 		rels = append(rels, r)
 	}
 	return rels, rows.Err()
+}
+
+// trust makes every TLS configuration pgx will try verify against pool. pgx
+// reads RootCAs at handshake time in both verify modes -- verify-full through
+// crypto/tls, verify-ca through its own VerifyPeerCertificate -- so setting it
+// after ParseConfig is enough.
+func trust(cfg *pgx.ConnConfig, pool *x509.CertPool) {
+	if cfg.TLSConfig != nil {
+		cfg.TLSConfig.RootCAs = pool
+	}
+	for _, fb := range cfg.Fallbacks {
+		if fb.TLSConfig != nil {
+			fb.TLSConfig.RootCAs = pool
+		}
+	}
 }

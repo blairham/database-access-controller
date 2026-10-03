@@ -213,8 +213,15 @@ spec:
                     minLength: 1
                     type: string
                   sslMode:
-                    default: require
-                    description: SSLMode is the libpq sslmode for the admin connection.
+                    default: verify-full
+                    description: |-
+                      SSLMode is the libpq sslmode for the admin connection. The default,
+                      verify-full, checks the server's certificate against the system CAs
+                      plus Amazon's RDS CAs (built in) and checks that it names the endpoint.
+                      Use verify-ca when the endpoint is a CNAME the certificate does not
+                      name. require encrypts without verifying -- the admin credential then
+                      goes to whoever answers on the address -- and disable is for a local
+                      PostgreSQL without TLS.
                     enum:
                     - disable
                     - require

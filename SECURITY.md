@@ -13,6 +13,10 @@ changes object ownership. Treat it accordingly:
   itself, and use `--watch-namespace` to confine it.
 - With `auth.method: password`, the admin password Secret is read from the
   resource's **own** namespace, never from a namespace named in the reference.
+- The admin connection verifies the server's certificate by default
+  (`sslMode: verify-full`, against the system CAs plus the built-in RDS CAs).
+  Setting `require` turns that off, and an IAM token or password then goes to
+  whoever answers on the endpoint's address.
 - With IAM authentication, the controller's pod identity can mint a token for
   `adminUser` on every instance its IAM policy names. Scope that policy to the
   instances and the user, not `rds-db:connect` on `*`.

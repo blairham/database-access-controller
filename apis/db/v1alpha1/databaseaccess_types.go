@@ -76,9 +76,15 @@ type InstanceRef struct {
 	// +optional
 	AdminUser string `json:"adminUser,omitempty"`
 
-	// SSLMode is the libpq sslmode for the admin connection.
+	// SSLMode is the libpq sslmode for the admin connection. The default,
+	// verify-full, checks the server's certificate against the system CAs
+	// plus Amazon's RDS CAs (built in) and checks that it names the endpoint.
+	// Use verify-ca when the endpoint is a CNAME the certificate does not
+	// name. require encrypts without verifying -- the admin credential then
+	// goes to whoever answers on the address -- and disable is for a local
+	// PostgreSQL without TLS.
 	// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
-	// +kubebuilder:default=require
+	// +kubebuilder:default=verify-full
 	// +optional
 	SSLMode string `json:"sslMode,omitempty"`
 
