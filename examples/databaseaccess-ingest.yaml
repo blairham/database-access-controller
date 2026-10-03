@@ -12,7 +12,7 @@ spec:
     database: appdb
     region: us-east-1
     adminUser: db_provisioner
-    sslMode: require
+    sslMode: verify-full
   role: ingest_app
   grantRdsIam: true
   grants:

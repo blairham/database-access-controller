@@ -87,6 +87,25 @@ The Secret is read from the resource's own namespace, never from a namespace
 named in the reference. `dbctl` takes the password from `PGPASSWORD` instead,
 since there is no cluster to read a Secret from on a workstation.
 
+### TLS
+
+`sslMode` defaults to `verify-full`: the server's certificate must chain to a
+trusted CA and name the endpoint. Amazon's RDS CAs are not in any system trust
+store, so the controller and `dbctl` carry the
+[RDS CA bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem)
+built in, alongside the system CAs. Nothing needs mounting.
+
+| `sslMode` | Use it for |
+|---|---|
+| `verify-full` | Default. RDS and Aurora endpoints, or any server with a certificate from a trusted CA |
+| `verify-ca` | An endpoint reached through a CNAME the certificate does not name |
+| `require` | Encrypts without verifying -- the admin credential goes to whoever answers. Avoid |
+| `disable` | A local PostgreSQL without TLS, such as the rig's |
+
+Upgrading from v0.0.1: the old default was `require`, and the API server wrote
+it into every `DatabaseAccess` created without an `sslMode`. Those keep
+`require` until you set `sslMode: verify-full` on them.
+
 ## Running it in a cluster
 
 ```sh
