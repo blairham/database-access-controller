@@ -73,6 +73,15 @@ cosign verify ghcr.io/blairham/database-controller:0.0.1 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
+Releases after `v0.0.2` also carry SLSA build provenance for the image, stored
+in ghcr.io beside it and in the repository's attestations. The subject is the
+multi-arch index, so check it by tag (image tags carry no `v`):
+
+```sh
+gh attestation verify oci://ghcr.io/blairham/database-controller:0.0.3 \
+  --repo blairham/database-controller
+```
+
 ## Reporting a vulnerability
 
 **Do not open a public issue.** Report it privately through GitHub:
