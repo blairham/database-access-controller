@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -69,6 +70,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	var da dbv1alpha1.DatabaseAccess
 	if err := r.Get(ctx, req.NamespacedName, &da); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Gone -- deleted without a finalizer, or after ours was released.
+			// Its series go with it, or a resource deleted while failing would
+			// keep its alert firing forever.
+			forget(req.Namespace, req.Name)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -145,6 +152,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	setCondition(&da, meta)
 	recordPending(ctx, &da, eng, access)
 
+	// Recorded before the status write, not after it: the database is already
+	// in the state the plan describes, and that is what the metric reports. A
+	// failed status write returns an error and the retry records it again.
+	recordApplied(da.Namespace, da.Name, len(res.Warnings), now.Time)
+
 	if err := r.Status().Update(ctx, &da); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
 	}
@@ -154,6 +166,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 func (r *Reconciler) reconcileDelete(ctx context.Context, da *dbv1alpha1.DatabaseAccess) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(da, finalizer) {
+		forget(da.Namespace, da.Name)
 		return ctrl.Result{}, nil
 	}
 
@@ -179,6 +192,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, da *dbv1alpha1.Databas
 	if err := r.Update(ctx, da); err != nil {
 		return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
 	}
+	forget(da.Namespace, da.Name)
 	return ctrl.Result{}, nil
 }
 
@@ -190,6 +204,10 @@ func (r *Reconciler) fail(
 	reason string,
 	cause error,
 ) (ctrl.Result, error) {
+	// Before the status write, so a failure that also cannot write status --
+	// an API server outage on top of a database one -- still pages.
+	recordFailed(da.Namespace, da.Name)
+
 	setCondition(da, metav1.Condition{
 		Type:               ConditionReady,
 		Status:             metav1.ConditionFalse,

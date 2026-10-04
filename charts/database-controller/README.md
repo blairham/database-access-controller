@@ -32,6 +32,10 @@ The IAM role needs `rds-db:connect` on the admin user's dbuser ARN.
 | `podDisruptionBudget` | `{}` | e.g. `{maxUnavailable: 1}` |
 | `configureDefaultAffinity` | `true` | Soft anti-affinity across nodes |
 | `metrics.serviceMonitor.enabled` | `false` | Needs the Prometheus operator CRDs |
+| `prometheusRule.enabled` | `false` | Alerts on the per-resource metrics; needs the Prometheus operator CRDs |
+| `prometheusRule.rules.notReady` | `for: 15m`, `critical` | `database_controller_access_ready == 0` |
+| `prometheusRule.rules.stale` | `7200s`, `for: 10m`, `warning` | Not planned against the database in two drift intervals (either mode) |
+| `prometheusRule.rules.notConverged` | off; `for: 2h`, `warning` | `database_controller_access_pending_statements > 0` |
 | `autoscaling.enabled` | `false` | Leave off — see below |
 
 ### Observe mode
