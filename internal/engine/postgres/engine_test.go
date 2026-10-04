@@ -19,6 +19,38 @@ type fakeInspector struct {
 	schemas   map[string]bool
 	owners    map[string][]string
 	relations map[string][]Relation
+
+	// The ACL reads. Zero values mean "nothing granted", so a test that sets
+	// none of these sees the full plan -- the shape every older test asserts.
+	members     map[string]bool     // "member/group"
+	dbPrivs     map[string][]string // "database/grantee"
+	schemaPrivs map[string][]string // "schema/grantee"
+	tablesOK    map[string]bool     // "schema/grantee/kinds" -> no relation lacks a privilege
+	defaults    map[string][]string // "owner/schema/objtype/grantee"
+}
+
+func (f fakeInspector) RoleIsMemberOf(_ context.Context, member, group string) (bool, error) {
+	return f.members[member+"/"+group], nil
+}
+
+func (f fakeInspector) DatabasePrivileges(_ context.Context, database, grantee string) ([]string, error) {
+	return f.dbPrivs[database+"/"+grantee], nil
+}
+
+func (f fakeInspector) SchemaPrivileges(_ context.Context, schema, grantee string) ([]string, error) {
+	return f.schemaPrivs[schema+"/"+grantee], nil
+}
+
+func (f fakeInspector) RelationsLackPrivileges(
+	_ context.Context,
+	schema, grantee string,
+	kinds, _ []string,
+) (bool, error) {
+	return !f.tablesOK[schema+"/"+grantee+"/"+strings.Join(kinds, "")], nil
+}
+
+func (f fakeInspector) DefaultPrivileges(_ context.Context, owner, schema, objType, grantee string) ([]string, error) {
+	return f.defaults[owner+"/"+schema+"/"+objType+"/"+grantee], nil
 }
 
 func (f fakeInspector) RoleExists(_ context.Context, role string) (bool, error) {
@@ -471,4 +503,93 @@ func TestNoRdsIamCheckWhenNotRequested(t *testing.T) {
 	e := New(nil, fakeInspector{roles: map[string]bool{}}, nil)
 	got := planText(t, e, engine.Access{Database: "appdb", Principal: "app_role"})
 	mustNotContain(t, got, "rds_iam")
+}
+
+// convergedInspector describes a database that already holds everything the
+// access in diffAccess asks for.
+func convergedInspector() fakeInspector {
+	tableKinds := strings.Join(tableGrantKinds, "")
+	seqKinds := strings.Join(sequenceGrantKinds, "")
+	return fakeInspector{
+		roles:       map[string]bool{"rds_iam": true, "app_role": true},
+		schemas:     map[string]bool{"app": true},
+		owners:      map[string][]string{"app": {"app_role"}},
+		members:     map[string]bool{"app_role/rds_iam": true},
+		dbPrivs:     map[string][]string{"appdb/app_role": {"CONNECT", "CREATE", "TEMPORARY"}},
+		schemaPrivs: map[string][]string{"app/app_role": {"CREATE", "USAGE"}},
+		tablesOK: map[string]bool{
+			"app/app_role/" + tableKinds: true,
+			"app/app_role/" + seqKinds:   true,
+		},
+		defaults: map[string][]string{
+			"app_role/app/r/app_role": {"DELETE", "INSERT", "SELECT", "UPDATE"},
+			"app_role/app/S/app_role": {"SELECT", "UPDATE", "USAGE"},
+		},
+	}
+}
+
+var diffAccess = engine.Access{
+	Database:  "appdb",
+	Principal: "app_role",
+	IAMAuth:   true,
+	Namespaces: []engine.Namespace{{
+		Name:       "app",
+		Privileges: []string{"USAGE", "CREATE", "SELECT", "INSERT", "UPDATE", "DELETE"},
+		Owner:      true,
+	}},
+}
+
+// A database that already matches the spec must produce an EMPTY plan. This is
+// what Observe mode reports as converged; before the plan was a diff, every
+// GRANT was re-emitted on every pass and a plan could never come back empty.
+func TestBuildPlanIsEmptyWhenTheDatabaseAlreadyMatches(t *testing.T) {
+	e := New(nil, convergedInspector(), nil)
+	p, err := e.BuildPlan(context.Background(), diffAccess)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if p.Len() != 0 {
+		t.Errorf("plan has %d statement(s) against a converged database, want 0:\n%s", p.Len(), p.Describe())
+	}
+}
+
+// Each missing piece must bring back exactly its own statement and nothing
+// else -- the diff is per grant, not all-or-nothing.
+func TestBuildPlanPlansOnlyWhatIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(f *fakeInspector)
+		want   string
+	}{
+		{
+			"rds_iam membership", func(f *fakeInspector) { delete(f.members, "app_role/rds_iam") },
+			`GRANT rds_iam TO "app_role";`,
+		},
+		{
+			"database CREATE", func(f *fakeInspector) { f.dbPrivs["appdb/app_role"] = []string{"CONNECT"} },
+			`GRANT CONNECT, CREATE ON DATABASE "appdb" TO "app_role";`,
+		},
+		{
+			"schema USAGE", func(f *fakeInspector) { f.schemaPrivs["app/app_role"] = []string{"CREATE"} },
+			`GRANT USAGE, CREATE ON SCHEMA "app" TO "app_role";`,
+		},
+		{"a table grant", func(f *fakeInspector) {
+			delete(f.tablesOK, "app/app_role/"+strings.Join(tableGrantKinds, ""))
+		}, `GRANT DELETE, INSERT, SELECT, UPDATE ON ALL TABLES IN SCHEMA "app" TO "app_role";`},
+		{"a sequence grant", func(f *fakeInspector) {
+			delete(f.tablesOK, "app/app_role/"+strings.Join(sequenceGrantKinds, ""))
+		}, `GRANT SELECT, UPDATE, USAGE ON ALL SEQUENCES IN SCHEMA "app" TO "app_role";`},
+		{"one default privilege", func(f *fakeInspector) {
+			f.defaults["app_role/app/r/app_role"] = []string{"SELECT", "INSERT", "UPDATE"}
+		}, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT DELETE, INSERT, SELECT, UPDATE ON TABLES TO "app_role";`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := convergedInspector()
+			tc.mutate(&f)
+			got := planText(t, New(nil, f, nil), diffAccess)
+			if strings.TrimSpace(got) != tc.want {
+				t.Errorf("plan:\n%s\nwant exactly:\n%s", got, tc.want)
+			}
+		})
+	}
 }

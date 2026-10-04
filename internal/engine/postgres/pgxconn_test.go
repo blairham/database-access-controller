@@ -66,3 +66,33 @@ func (p pgxConn) RelationsNotOwnedBy(ctx context.Context, schema, owner string) 
 	}
 	return out, rows.Err()
 }
+
+// The ACL reads delegate to the production Conn, so the integration and
+// equivalence suites exercise the exact queries the controller runs rather
+// than a second copy of them.
+
+func (p pgxConn) prod() *Conn { return &Conn{conn: p.c} }
+
+func (p pgxConn) RoleIsMemberOf(ctx context.Context, member, group string) (bool, error) {
+	return p.prod().RoleIsMemberOf(ctx, member, group)
+}
+
+func (p pgxConn) DatabasePrivileges(ctx context.Context, database, grantee string) ([]string, error) {
+	return p.prod().DatabasePrivileges(ctx, database, grantee)
+}
+
+func (p pgxConn) SchemaPrivileges(ctx context.Context, schema, grantee string) ([]string, error) {
+	return p.prod().SchemaPrivileges(ctx, schema, grantee)
+}
+
+func (p pgxConn) RelationsLackPrivileges(
+	ctx context.Context,
+	schema, grantee string,
+	kinds, privs []string,
+) (bool, error) {
+	return p.prod().RelationsLackPrivileges(ctx, schema, grantee, kinds, privs)
+}
+
+func (p pgxConn) DefaultPrivileges(ctx context.Context, owner, schema, objType, grantee string) ([]string, error) {
+	return p.prod().DefaultPrivileges(ctx, owner, schema, objType, grantee)
+}

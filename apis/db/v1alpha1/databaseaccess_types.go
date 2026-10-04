@@ -162,6 +162,30 @@ const (
 	EnginePostgres Engine = "postgres"
 )
 
+// Mode selects whether the controller changes the database or only reports
+// what it would change.
+// +kubebuilder:validation:Enum=Observe;Enforce
+type Mode string
+
+const (
+	// ModeEnforce applies the plan: the database is brought to the declared
+	// state on every reconcile.
+	ModeEnforce Mode = "Enforce"
+
+	// ModeObserve builds the same plan and records it in status without
+	// executing a single statement.
+	//
+	// It exists for cutovers. Turning a DatabaseAccess on next to whatever
+	// provisioned the database before -- a Job, a runbook, a human -- in
+	// Enforce proves only that the controller did no harm, because the old
+	// provisioner's grants are already there to hide a controller that does
+	// nothing. Observe answers the question that matters first: against the
+	// real database, what exactly would this controller change? An empty
+	// plan on a database the old provisioner converged is the evidence that
+	// the two agree, gathered before the controller is allowed to write.
+	ModeObserve Mode = "Observe"
+)
+
 // DatabaseAccessSpec declares the desired database state for one service.
 type DatabaseAccessSpec struct {
 	// Engine is the database engine to provision against.
@@ -207,6 +231,17 @@ type DatabaseAccessSpec struct {
 	// +kubebuilder:default=false
 	// +optional
 	RevokeOnDelete bool `json:"revokeOnDelete,omitempty"`
+
+	// Mode is Enforce (apply the plan) or Observe (plan only: report in
+	// status what would change, and change nothing).
+	//
+	// Observe never executes a statement, never adds the revoke finalizer and
+	// never revokes on delete, even with revokeOnDelete set. Switching a
+	// resource from Observe to Enforce is the cutover; switching back stops
+	// all writes on the next reconcile.
+	// +kubebuilder:default=Enforce
+	// +optional
+	Mode Mode `json:"mode,omitempty"`
 }
 
 // DatabaseAccessStatus reports what the controller actually applied.
@@ -242,6 +277,26 @@ type DatabaseAccessStatus struct {
 	// surfaced rather than buried in a pod log.
 	// +optional
 	Warnings []string `json:"warnings,omitempty"`
+
+	// PendingStatements counts the statements the database still needs to
+	// match the spec, from the plan built on the last reconcile.
+	//
+	// In Observe it is the size of the plan that was not applied. In Enforce
+	// it comes from a fresh plan built after applying, so it is what the
+	// database STILL lacks -- non-zero there means a statement keeps failing
+	// or keeps being undone, not that the controller is behind.
+	// +optional
+	PendingStatements int `json:"pendingStatements"`
+
+	// Pending lists those statements, capped at the first 50. The list is
+	// truncated whenever it is shorter than pendingStatements.
+	// +optional
+	Pending []string `json:"pending,omitempty"`
+
+	// LastPlannedTime is when the database was last read and planned against,
+	// in either mode. LastAppliedTime does not move in Observe; this does.
+	// +optional
+	LastPlannedTime *metav1.Time `json:"lastPlannedTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -250,6 +305,8 @@ type DatabaseAccessStatus struct {
 // +kubebuilder:printcolumn:name="Role",type=string,JSONPath=`.spec.role`
 // +kubebuilder:printcolumn:name="Database",type=string,JSONPath=`.spec.instance.database`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
+// +kubebuilder:printcolumn:name="Pending",type=integer,JSONPath=`.status.pendingStatements`
 // +kubebuilder:printcolumn:name="Applied",type=date,JSONPath=`.status.lastAppliedTime`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

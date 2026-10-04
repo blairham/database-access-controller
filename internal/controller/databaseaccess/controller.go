@@ -79,7 +79,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// The finalizer is only worth carrying when deletion has work to do.
 	// Holding one otherwise turns a stuck controller into a namespace that
 	// cannot be deleted.
-	if da.Spec.RevokeOnDelete && !controllerutil.ContainsFinalizer(&da, finalizer) {
+	// Observe never revokes, so it never needs the finalizer either.
+	if da.Spec.RevokeOnDelete && !observing(&da) && !controllerutil.ContainsFinalizer(&da, finalizer) {
 		controllerutil.AddFinalizer(&da, finalizer)
 		if err := r.Update(ctx, &da); err != nil {
 			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
@@ -97,6 +98,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	p, err := eng.BuildPlan(ctx, access)
 	if err != nil {
 		return r.fail(ctx, &da, "PlanFailed", err)
+	}
+
+	if observing(&da) {
+		return r.observe(ctx, &da, pendingOf(p))
 	}
 
 	res, err := p.Apply(ctx)
@@ -138,6 +143,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		meta.Message = fmt.Sprintf("applied %d statement(s), %d skipped", res.Applied, len(res.Warnings))
 	}
 	setCondition(&da, meta)
+	recordPending(ctx, &da, eng, access)
 
 	if err := r.Status().Update(ctx, &da); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
@@ -151,7 +157,9 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, da *dbv1alpha1.Databas
 		return ctrl.Result{}, nil
 	}
 
-	if da.Spec.RevokeOnDelete {
+	// A resource switched to Observe after the finalizer was added is released
+	// without revoking: Observe writes nothing, deletion included.
+	if da.Spec.RevokeOnDelete && !observing(da) {
 		eng, err := r.NewEngine(ctx, da)
 		if err != nil {
 			return r.fail(ctx, da, "ConnectionFailed", err)

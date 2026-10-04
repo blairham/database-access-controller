@@ -33,6 +33,12 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
+    - jsonPath: .spec.mode
+      name: Mode
+      type: string
+    - jsonPath: .status.pendingStatements
+      name: Pending
+      type: integer
     - jsonPath: .status.lastAppliedTime
       name: Applied
       type: date
@@ -236,6 +242,20 @@ spec:
                     is password
                   rule: (has(self.auth) && has(self.auth.method) && self.auth.method
                     == 'password') || (has(self.region) && size(self.region) > 0)
+              mode:
+                default: Enforce
+                description: |-
+                  Mode is Enforce (apply the plan) or Observe (plan only: report in
+                  status what would change, and change nothing).
+
+                  Observe never executes a statement, never adds the revoke finalizer and
+                  never revokes on delete, even with revokeOnDelete set. Switching a
+                  resource from Observe to Enforce is the cutover; switching back stops
+                  all writes on the next reconcile.
+                enum:
+                - Observe
+                - Enforce
+                type: string
               revokeOnDelete:
                 default: false
                 description: |-
@@ -331,10 +351,33 @@ spec:
                 description: LastAppliedTime is when that plan was applied.
                 format: date-time
                 type: string
+              lastPlannedTime:
+                description: |-
+                  LastPlannedTime is when the database was last read and planned against,
+                  in either mode. LastAppliedTime does not move in Observe; this does.
+                format: date-time
+                type: string
               observedGeneration:
                 description: ObservedGeneration is the .metadata.generation this status
                   describes.
                 format: int64
+                type: integer
+              pending:
+                description: |-
+                  Pending lists those statements, capped at the first 50. The list is
+                  truncated whenever it is shorter than pendingStatements.
+                items:
+                  type: string
+                type: array
+              pendingStatements:
+                description: |-
+                  PendingStatements counts the statements the database still needs to
+                  match the spec, from the plan built on the last reconcile.
+
+                  In Observe it is the size of the plan that was not applied. In Enforce
+                  it comes from a fresh plan built after applying, so it is what the
+                  database STILL lacks -- non-zero there means a statement keeps failing
+                  or keeps being undone, not that the controller is behind.
                 type: integer
               statementsApplied:
                 description: StatementsApplied counts the statements in the last applied

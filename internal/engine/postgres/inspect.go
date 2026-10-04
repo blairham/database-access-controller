@@ -12,6 +12,7 @@ const (
 	RelKindView      = "v"
 	RelKindMatView   = "m"
 	RelKindSequence  = "S"
+	RelKindForeign   = "f"
 )
 
 // Relation is one object in a schema, with the role that owns it.
@@ -68,6 +69,50 @@ type Inspector interface {
 	// not the given role, across tables, partitions, sequences, views and
 	// materialized views.
 	RelationsNotOwnedBy(ctx context.Context, schema, owner string) ([]Relation, error)
+
+	// The reads below make the plan a diff: a GRANT is planned only when the
+	// privilege it confers is not already there. Without them every reconcile
+	// re-issued every grant, so a plan could never come back empty and
+	// Observe mode would report the same statements forever on a database
+	// that needed nothing.
+	//
+	// ALL of them read EXPLICIT ACL entries (aclexplode over the stored ACL),
+	// never has_*_privilege. has_*_privilege answers "can this role do it",
+	// counting privileges inherited through role membership and the implicit
+	// rights of an owner, so it would call a grant present that was never
+	// made -- and the next migration that replaces the object, or the next
+	// change to that membership, would silently take the access away. The
+	// provisioner this replaces wrote explicit grants; so does this one.
+	//
+	// A NULL ACL means "the built-in default", which carries no explicit entry
+	// for the role, so it reads as missing and the GRANT is planned. That is
+	// also what makes the result match the old Job's: a GRANT on an object
+	// with a NULL ACL materializes it.
+
+	// RoleIsMemberOf reports whether member holds a direct membership in group,
+	// granted by anyone. On PostgreSQL 16 one membership can be recorded once
+	// per grantor; any of them is enough to authenticate, so one is enough to
+	// skip the GRANT.
+	RoleIsMemberOf(ctx context.Context, member, group string) (bool, error)
+
+	// DatabasePrivileges returns the privileges explicitly granted to grantee
+	// on the database.
+	DatabasePrivileges(ctx context.Context, database, grantee string) ([]string, error)
+
+	// SchemaPrivileges returns the privileges explicitly granted to grantee on
+	// the schema.
+	SchemaPrivileges(ctx context.Context, schema, grantee string) ([]string, error)
+
+	// RelationsLackPrivileges reports whether any relation of the given kinds
+	// in the schema is missing an explicit grant to grantee of any of privs.
+	// One missing privilege on one relation is enough to plan the
+	// schema-wide GRANT; re-granting what is already there is harmless.
+	RelationsLackPrivileges(ctx context.Context, schema, grantee string, kinds, privs []string) (bool, error)
+
+	// DefaultPrivileges returns the privileges registered by ALTER DEFAULT
+	// PRIVILEGES FOR ROLE owner IN SCHEMA schema for objType ("r" for tables,
+	// "S" for sequences) to grantee.
+	DefaultPrivileges(ctx context.Context, owner, schema, objType, grantee string) ([]string, error)
 }
 
 // Queries used by the pgx-backed Inspector. They are exported so the CLI can
@@ -141,4 +186,77 @@ SELECT c.relname, c.relkind::text, pg_get_userbyid(c.relowner)
             ELSE 2
           END,
           c.relname`
+	// The ACL reads. grantee is resolved by name inside the query: a role that
+	// does not exist yet matches no entry, so everything reads as missing,
+	// which is right -- the plan is about to create it.
+
+	QueryRoleIsMemberOf = `
+SELECT EXISTS (
+  SELECT 1
+    FROM pg_auth_members a
+    JOIN pg_roles m ON m.oid = a.member
+    JOIN pg_roles g ON g.oid = a.roleid
+   WHERE m.rolname = $1
+     AND g.rolname = $2
+)`
+
+	QueryDatabasePrivileges = `
+SELECT DISTINCT a.privilege_type
+  FROM pg_database d, aclexplode(d.datacl) a
+ WHERE d.datname = $1
+   AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = $2)
+ ORDER BY 1`
+
+	QuerySchemaPrivileges = `
+SELECT DISTINCT a.privilege_type
+  FROM pg_namespace n, aclexplode(n.nspacl) a
+ WHERE n.nspname = $1
+   AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = $2)
+ ORDER BY 1`
+
+	// QueryRelationsLackPrivileges pairs every relation of the requested kinds
+	// with every wanted privilege and looks for one pair with no explicit
+	// entry. aclexplode of a NULL ACL yields no rows, so a relation still on
+	// the default ACL lacks everything.
+	QueryRelationsLackPrivileges = `
+SELECT EXISTS (
+  SELECT 1
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   CROSS JOIN unnest($4::text[]) AS want(priv)
+   WHERE n.nspname = $1
+     AND c.relkind::text = ANY($3::text[])
+     AND NOT EXISTS (
+       SELECT 1
+         FROM aclexplode(c.relacl) a
+        WHERE a.grantee = (SELECT oid FROM pg_roles WHERE rolname = $2)
+          AND a.privilege_type = want.priv
+     )
+)`
+
+	QueryDefaultPrivileges = `
+SELECT DISTINCT a.privilege_type
+  FROM pg_default_acl d
+  JOIN pg_namespace n ON n.oid = d.defaclnamespace,
+       aclexplode(d.defaclacl) a
+ WHERE d.defaclrole = (SELECT oid FROM pg_roles WHERE rolname = $1)
+   AND n.nspname = $2
+   AND d.defaclobjtype::text = $3
+   AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = $4)
+ ORDER BY 1`
+)
+
+// Relation kinds a schema-wide GRANT reaches, as PostgreSQL enumerates them
+// for ON ALL TABLES / ON ALL SEQUENCES IN SCHEMA. ALL TABLES includes views,
+// materialized views, foreign and partitioned tables -- so the diff must
+// look at the same set, or a view missing its grant would read as converged.
+var (
+	tableGrantKinds    = []string{RelKindTable, RelKindPartition, RelKindView, RelKindMatView, RelKindForeign}
+	sequenceGrantKinds = []string{RelKindSequence}
+)
+
+// Default-ACL object types, as pg_default_acl.defaclobjtype records them.
+const (
+	defaclTables    = "r"
+	defaclSequences = "S"
 )
