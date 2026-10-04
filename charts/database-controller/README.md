@@ -34,6 +34,14 @@ The IAM role needs `rds-db:connect` on the admin user's dbuser ARN.
 | `metrics.serviceMonitor.enabled` | `false` | Needs the Prometheus operator CRDs |
 | `autoscaling.enabled` | `false` | Leave off — see below |
 
+### Observe mode
+
+A `DatabaseAccess` with `spec.mode: Observe` is planned against on every
+reconcile and never applied: no statement runs, no finalizer is added, and
+nothing is revoked on delete. Its `status.pendingStatements` / `status.pending`
+and `Converged` condition say what Enforce would change. The chart needs no
+setting for it; the mode is per resource.
+
 ### Why autoscaling is off
 
 Leader election means exactly one replica reconciles however many are running.

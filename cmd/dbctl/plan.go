@@ -127,8 +127,9 @@ Usage: dbctl plan -f <manifest>
   Connects to the database named in a DatabaseAccess manifest, plans against
   its current state, and prints the statements the controller would run.
 
-  Nothing is written. The plan reflects real state: which schemas exist, which
-  roles own objects in them, and which relations would be reassigned.
+  Nothing is written. The plan is a diff against the database as it is: a
+  statement is printed only when what it would grant or change is missing. No
+  output and "0 statement(s)" means the database already matches the manifest.
 
 Options:
 

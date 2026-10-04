@@ -430,11 +430,18 @@ func TestReapplyRepairsARevokedGrant(t *testing.T) {
 		t.Fatalf("re-planning: %v", err)
 	}
 
-	// The hash is the same, which is the whole point of the warning above.
-	if settled.Hash() != second.Hash() {
-		t.Errorf("plan hash changed after a revoke (%s -> %s); if this is now a "+
-			"reliable drift signal the comment above can be revisited",
-			settled.Hash(), second.Hash())
+	// The plan is a diff, so drift is now VISIBLE in it: a settled database
+	// plans nothing, and the revoke brings back exactly the one statement that
+	// repairs it. This used to assert the opposite -- that the hash did NOT
+	// change, because the plan never read grants and a revoke was invisible to
+	// it. That is why re-applying on every reconcile was mandatory; it is still
+	// what the controller does, and the repair below still pins it.
+	if settled.Len() != 0 {
+		t.Errorf("settled plan has %d statement(s), want 0:\n%s", settled.Len(), settled.Describe())
+	}
+	want := `GRANT USAGE ON SCHEMA "itest7" TO "itest7_reader";`
+	if second.Len() != 1 || second.Steps()[0].Describe() != want {
+		t.Errorf("plan after the revoke:\n%s\nwant exactly: %s", second.Describe(), want)
 	}
 
 	if _, err := second.Apply(ctx); err != nil {

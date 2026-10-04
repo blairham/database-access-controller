@@ -132,33 +132,65 @@ Every statement is safe to re-run, and the plan converges:
 - `CREATE ROLE` is omitted when the role exists, and still tolerates a
   concurrent create.
 - `CREATE SCHEMA` is emitted only when the schema is absent.
-- `GRANT` and `ALTER DEFAULT PRIVILEGES` are upserts.
+- `GRANT` and `ALTER DEFAULT PRIVILEGES` are emitted only when the privilege
+  they confer is missing from the stored ACL (see below).
 - Ownership `ALTER`s are emitted only for relations the principal does not
   already own, and never for column-owned sequences.
 
-Measured on a rig: after the first apply, the plan hash and statement count are
-identical on every subsequent reconcile and never grow.
+**The plan is a diff.** A converged database plans zero statements; a grant
+revoked by hand brings back exactly the statement that repairs it. Measured on
+the 11 real staging grant sets: once converged, every resource reports
+`pendingStatements: 0` and applies 0 statements per reconcile, and a manual
+`REVOKE SELECT ON oms.orders FROM oms_app` reappears as the single statement
+`GRANT SELECT ON ALL TABLES IN SCHEMA "oms" TO "oms_app"`.
 
-**It is not a no-op, and that is deliberate.** The plan is re-applied on every
-reconcile rather than skipped when nothing appears to have changed.
+It was not always. The planner used to read only role existence, schema
+existence and object owners, and re-issued every grant on every pass. A revoke
+was then invisible to the plan -- revoking `USAGE` left the plan hash unchanged
+-- so skipping a reconcile whose hash matched `status.appliedPlanHash` would
+have left drift in place forever while reporting Ready. Re-applying on every
+reconcile was the only safe choice. `TestReapplyRepairsARevokedGrant` used to
+pin that the hash did NOT move; it now pins that the settled plan is empty and
+the revoke reappears as exactly one statement, and the repair half is
+unchanged.
 
-The obvious optimization is to compare the new plan's hash against
-`status.appliedPlanHash` and do nothing when they match. **That would silently
-break drift repair.** The plan is built from what the engine reads — role
-existence, schema existence, object owners — and it does not read current
-grants. A privilege revoked by hand therefore produces a byte-identical plan
-with an identical hash. Measured on a rig: revoking `USAGE` left the hash at
-`79faccfc19bb167b`, and re-applying restored the grant. A hash-based skip would
-have left it revoked, forever, while reporting Ready.
+The controller still re-plans on every reconcile and applies whatever the plan
+holds. It never skips on a hash.
 
-Re-issuing grants is cheap and `GRANT` is an upsert. Skipping is not.
-`TestReapplyRepairsARevokedGrant` pins this, and fails loudly if the hash ever
-does become a reliable drift signal — at which point the tradeoff is worth
-revisiting.
+### Why the diff reads explicit ACLs, not has_*_privilege
 
-The hash remains useful as an *observation* in status: it answers "did the
-desired shape change", which is a different question from "is the database
-still in that shape".
+`has_table_privilege` answers "can this role do it", counting privileges held
+through role membership and an owner's implicit rights. Planning from it would
+call a grant present that was never made. Measured: with that check, the
+controller skipped the GRANT on every object a role owns, leaving those ACLs
+NULL where the Job it replaces had materialized explicit entries
+(`covenant.policies|covenant_app=arwdDxt/covenant_app` and six more lines in
+the equivalence diff). Access was the same in that case. It would not be for a
+grant that exists only through a membership someone later removes.
+
+The reads therefore use `aclexplode` over the stored ACL. A NULL ACL (an object
+on the built-in default) has no explicit entries, so it reads as missing and
+the GRANT is planned. That is also what makes the result match the Job.
+
+## Modes
+
+`spec.mode: Observe` builds the plan and records it in status
+(`pendingStatements`, `pending`, a `Converged` condition) without executing a
+statement, adding the revoke finalizer, or revoking on delete. The reconciler
+hands Observe only the plan's statement text, never the plan, so that path has
+no step it could call `Apply` on.
+
+It is the cutover tool. Enforce next to an existing provisioner proves only
+that the controller does no harm, because the old grants hide a controller that
+does nothing. Observe on the database that provisioner converged reports the
+exact difference -- zero on all 11 staging grant sets in the equivalence
+harness -- before the controller is allowed to write.
+
+In Enforce, pending is recorded from a fresh plan built after the apply rather
+than from the plan just applied. The applied plan cannot say what did not take:
+a best-effort default privilege that was refused, or a GRANT PostgreSQL accepted
+with "no privileges were granted". The re-plan costs one more round of catalog
+reads and no writes.
 
 ## Deletion
 

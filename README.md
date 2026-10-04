@@ -132,9 +132,41 @@ dbctl plan -f examples/databaseaccess-ingest.yaml
 ```
 
 This connects to the real database and prints the exact statements the
-controller would run, without running them. The plan reflects actual state:
-which schemas exist, which roles own objects in them, which relations would be
-reassigned.
+controller would run, without running them. The plan is a **diff** against the
+database as it is: a statement appears only when the role, schema, grant,
+default privilege or ownership it would establish is not already there. An
+empty plan means the database already matches the manifest.
+
+## Observe mode
+
+`spec.mode` is `Enforce` (the default) or `Observe`. In `Observe` the controller
+reads the database and builds the same plan on every reconcile, records it in
+status, and executes nothing -- no grants, no ownership changes, no revoke on
+delete, and no finalizer.
+
+```sh
+kubectl get dba -A        # MODE and PENDING columns
+kubectl get dba <name> -o jsonpath='{.status.pending}'
+```
+
+| Status | Meaning |
+|---|---|
+| `pendingStatements` | how many statements the database still needs (exact) |
+| `pending` | those statements, first 50 |
+| `Converged` condition | `True` when nothing is pending |
+| `Ready` condition | `Observed` in Observe: the database was reachable and planned against |
+| `lastPlannedTime` | moves on every reconcile in both modes; `lastAppliedTime` does not move in Observe |
+
+It exists for cutovers. Turning the controller on in Enforce next to whatever
+provisioned the database before only proves it does no harm: the old grants
+are already there to hide a controller that does nothing. In Observe, zero
+pending statements on a database the old provisioner converged is evidence
+that the two agree, collected before the controller is allowed to write.
+Switching a resource to `Enforce` is then the cutover.
+
+In Enforce, `pendingStatements` comes from a fresh plan built after applying,
+so it reports what is still missing after the apply. Anything that stays
+non-zero there is a statement that keeps failing or keeps being undone.
 
 ## Layout
 

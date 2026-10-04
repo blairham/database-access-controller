@@ -20,6 +20,10 @@ const (
 	PrivTrigger    = "TRIGGER"
 	PrivUsage      = "USAGE"
 	PrivCreate     = "CREATE"
+
+	// PrivConnect is a database privilege only; it never appears in a
+	// schema grant and is not accepted from the spec.
+	PrivConnect = "CONNECT"
 )
 
 var allPrivileges = map[string]bool{

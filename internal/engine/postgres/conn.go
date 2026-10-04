@@ -170,6 +170,67 @@ func (c *Conn) RelationsNotOwnedBy(ctx context.Context, schema, owner string) ([
 	return rels, rows.Err()
 }
 
+// RoleIsMemberOf reports whether member is directly a member of group.
+func (c *Conn) RoleIsMemberOf(ctx context.Context, member, group string) (bool, error) {
+	var ok bool
+	if err := c.conn.QueryRow(ctx, QueryRoleIsMemberOf, member, group).Scan(&ok); err != nil {
+		return false, fmt.Errorf("querying membership of %q in %q: %w", member, group, err)
+	}
+	return ok, nil
+}
+
+// DatabasePrivileges returns grantee's explicit privileges on the database.
+func (c *Conn) DatabasePrivileges(ctx context.Context, database, grantee string) ([]string, error) {
+	return c.strings(ctx, fmt.Sprintf("privileges of %q on database %q", grantee, database),
+		QueryDatabasePrivileges, database, grantee)
+}
+
+// SchemaPrivileges returns grantee's explicit privileges on the schema.
+func (c *Conn) SchemaPrivileges(ctx context.Context, schema, grantee string) ([]string, error) {
+	return c.strings(ctx, fmt.Sprintf("privileges of %q on schema %q", grantee, schema),
+		QuerySchemaPrivileges, schema, grantee)
+}
+
+// RelationsLackPrivileges reports whether any relation of the given kinds lacks
+// one of privs for grantee.
+func (c *Conn) RelationsLackPrivileges(
+	ctx context.Context,
+	schema, grantee string,
+	kinds, privs []string,
+) (bool, error) {
+	var lacks bool
+	if err := c.conn.QueryRow(ctx, QueryRelationsLackPrivileges, schema, grantee, kinds, privs).Scan(&lacks); err != nil {
+		return false, fmt.Errorf("querying relation privileges of %q in %q: %w", grantee, schema, err)
+	}
+	return lacks, nil
+}
+
+// DefaultPrivileges returns the default privileges owner registered for grantee.
+func (c *Conn) DefaultPrivileges(ctx context.Context, owner, schema, objType, grantee string) ([]string, error) {
+	return c.strings(ctx,
+		fmt.Sprintf("default privileges for role %q in schema %q on %q to %q", owner, schema, objType, grantee),
+		QueryDefaultPrivileges, owner, schema, objType, grantee)
+}
+
+// strings runs a one-column text query.
+func (c *Conn) strings(ctx context.Context, what, query string, args ...any) ([]string, error) {
+	rows, err := c.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying %s: %w", what, err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("scanning %s: %w", what, err)
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // trust makes every TLS configuration pgx will try verify against pool. pgx
 // reads RootCAs at handshake time in both verify modes -- verify-full through
 // crypto/tls, verify-ca through its own VerifyPeerCertificate -- so setting it

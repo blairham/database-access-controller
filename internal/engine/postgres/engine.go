@@ -64,6 +64,11 @@ func (e *Engine) Validate(a engine.Access) error {
 
 // BuildPlan returns the ordered statements that bring the database to the state
 // Access describes. Every statement is safe to re-run.
+//
+// The plan is a DIFF: a statement appears only when the database does not
+// already hold what it would grant (see the ACL reads on Inspector). An empty
+// plan therefore means "nothing to do", which is what Observe mode reports and
+// what lets a converged database show zero pending statements.
 func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, error) {
 	if err := e.Validate(a); err != nil {
 		return nil, err
@@ -122,21 +127,33 @@ func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, er
 			)
 		}
 
-		p.Add(&Statement{
-			SQL:  fmt.Sprintf("GRANT rds_iam TO %s", role),
-			Why:  "authenticate with an IAM auth token instead of a stored password",
-			exec: e.exec,
-		})
+		member, err := e.inspect.RoleIsMemberOf(ctx, a.Principal, "rds_iam")
+		if err != nil {
+			return nil, fmt.Errorf("checking rds_iam membership of %q: %w", a.Principal, err)
+		}
+		if !member {
+			p.Add(&Statement{
+				SQL:  fmt.Sprintf("GRANT rds_iam TO %s", role),
+				Why:  "authenticate with an IAM auth token instead of a stored password",
+				exec: e.exec,
+			})
+		}
 	}
 
 	// CONNECT opens a session. CREATE is needed for CREATE SCHEMA IF NOT
 	// EXISTS: PostgreSQL checks the privilege before it checks existence, so
 	// even a no-op call from a service's own migrator requires it.
-	p.Add(&Statement{
-		SQL:  fmt.Sprintf("GRANT CONNECT, CREATE ON DATABASE %s TO %s", QuoteIdent(a.Database), role),
-		Why:  "CONNECT opens a session; CREATE is required even by a no-op CREATE SCHEMA IF NOT EXISTS",
-		exec: e.exec,
-	})
+	dbPrivs, err := e.inspect.DatabasePrivileges(ctx, a.Database, a.Principal)
+	if err != nil {
+		return nil, fmt.Errorf("reading privileges of %q on database %q: %w", a.Principal, a.Database, err)
+	}
+	if !hasAll(dbPrivs, []string{PrivConnect, PrivCreate}) {
+		p.Add(&Statement{
+			SQL:  fmt.Sprintf("GRANT CONNECT, CREATE ON DATABASE %s TO %s", QuoteIdent(a.Database), role),
+			Why:  "CONNECT opens a session; CREATE is required even by a no-op CREATE SCHEMA IF NOT EXISTS",
+			exec: e.exec,
+		})
+	}
 
 	for _, ns := range a.Namespaces {
 		if err := e.addNamespace(ctx, p, a.Principal, ns); err != nil {
@@ -175,29 +192,47 @@ func (e *Engine) addNamespace(ctx context.Context, p *plan.Plan, principal strin
 		}
 	}
 
-	p.Add(&Statement{
-		SQL:  fmt.Sprintf("GRANT %s ON SCHEMA %s TO %s", Join(privs.Schema), schema, role),
-		Why:  "USAGE resolves names in the schema; without it every table grant below is unusable",
-		exec: e.exec,
-	})
-
-	if len(privs.Table) > 0 {
+	schemaPrivs, err := e.inspect.SchemaPrivileges(ctx, ns.Name, principal)
+	if err != nil {
+		return fmt.Errorf("reading privileges of %q on schema %q: %w", principal, ns.Name, err)
+	}
+	if !hasAll(schemaPrivs, privs.Schema) {
 		p.Add(&Statement{
-			SQL:  fmt.Sprintf("GRANT %s ON ALL TABLES IN SCHEMA %s TO %s", Join(privs.Table), schema, role),
-			Why:  "covers tables that exist now; the default privileges below cover tables created later",
+			SQL:  fmt.Sprintf("GRANT %s ON SCHEMA %s TO %s", Join(privs.Schema), schema, role),
+			Why:  "USAGE resolves names in the schema; without it every table grant below is unusable",
 			exec: e.exec,
 		})
+	}
+
+	if len(privs.Table) > 0 {
+		lacks, err := e.inspect.RelationsLackPrivileges(ctx, ns.Name, principal, tableGrantKinds, privs.Table)
+		if err != nil {
+			return fmt.Errorf("reading table privileges of %q in schema %q: %w", principal, ns.Name, err)
+		}
+		if lacks {
+			p.Add(&Statement{
+				SQL:  fmt.Sprintf("GRANT %s ON ALL TABLES IN SCHEMA %s TO %s", Join(privs.Table), schema, role),
+				Why:  "covers tables that exist now; the default privileges below cover tables created later",
+				exec: e.exec,
+			})
+		}
 		if err := e.addDefaultPrivileges(ctx, p, principal, ns.Name, "TABLES", privs.Table, ns.Owner); err != nil {
 			return err
 		}
 	}
 
 	if len(privs.Sequence) > 0 {
-		p.Add(&Statement{
-			SQL:  fmt.Sprintf("GRANT %s ON ALL SEQUENCES IN SCHEMA %s TO %s", Join(privs.Sequence), schema, role),
-			Why:  "sequence privileges are the requested set intersected with SELECT/UPDATE/USAGE, the only ones a sequence accepts",
-			exec: e.exec,
-		})
+		lacks, err := e.inspect.RelationsLackPrivileges(ctx, ns.Name, principal, sequenceGrantKinds, privs.Sequence)
+		if err != nil {
+			return fmt.Errorf("reading sequence privileges of %q in schema %q: %w", principal, ns.Name, err)
+		}
+		if lacks {
+			p.Add(&Statement{
+				SQL:  fmt.Sprintf("GRANT %s ON ALL SEQUENCES IN SCHEMA %s TO %s", Join(privs.Sequence), schema, role),
+				Why:  "sequence privileges are the requested set intersected with SELECT/UPDATE/USAGE, the only ones a sequence accepts",
+				exec: e.exec,
+			})
+		}
 		if err := e.addDefaultPrivileges(ctx, p, principal, ns.Name, "SEQUENCES", privs.Sequence, ns.Owner); err != nil {
 			return err
 		}
@@ -259,6 +294,13 @@ func (e *Engine) addDefaultPrivileges(
 		seen[owner] = true
 		if err := ValidateIdent("owner role", owner); err != nil {
 			return fmt.Errorf("schema %q: %w", schema, err)
+		}
+		have, err := e.inspect.DefaultPrivileges(ctx, owner, schema, defaclObjType(objType), principal)
+		if err != nil {
+			return fmt.Errorf("reading default privileges for role %q in schema %q: %w", owner, schema, err)
+		}
+		if hasAll(have, privs) {
+			continue
 		}
 		p.Add(&Statement{
 			SQL: fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %s GRANT %s ON %s TO %s",
@@ -342,4 +384,27 @@ func (e *Engine) BuildRevokePlan(ctx context.Context, a engine.Access) (*plan.Pl
 	})
 
 	return p, nil
+}
+
+// hasAll reports whether every privilege in want appears in have.
+func hasAll(have, want []string) bool {
+	got := make(map[string]bool, len(have))
+	for _, h := range have {
+		got[h] = true
+	}
+	for _, w := range want {
+		if !got[w] {
+			return false
+		}
+	}
+	return true
+}
+
+// defaclObjType maps the ALTER DEFAULT PRIVILEGES object keyword to the code
+// pg_default_acl records it under.
+func defaclObjType(objType string) string {
+	if objType == "SEQUENCES" {
+		return defaclSequences
+	}
+	return defaclTables
 }
