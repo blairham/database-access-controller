@@ -84,8 +84,6 @@ func (c *countingEngine) factory() EngineFactory {
 
 func observeMode(da *dbv1alpha1.DatabaseAccess) { da.Spec.Mode = dbv1alpha1.ModeObserve }
 
-func uniqueName(base string) string { return fmt.Sprintf("%s-%d", base, time.Now().UnixNano()) }
-
 // The CRD must default mode to Enforce, so an existing manifest that predates
 // the field keeps doing what it did.
 func TestCRDDefaultsModeToEnforce(t *testing.T) {

@@ -133,6 +133,31 @@ the generated RBAC being sufficient, leader election against a real Lease. It
 uses password auth, because a kind cluster has no IAM, and it therefore says
 nothing about whether the Pod Identity path works. See the header of `k5s.yaml`.
 
+## Metrics and alerts
+
+Beyond controller-runtime's own reconcile counters, the leader exports one
+series per `DatabaseAccess`, labeled by `namespace` and `name` only:
+
+| Metric | Meaning |
+|---|---|
+| `database_controller_access_ready` | `1` when the last reconcile succeeded (applied in Enforce, planned in Observe), `0` when it failed |
+| `database_controller_access_warnings` | Best-effort statements skipped on the last apply (`status.warnings`); `0` in Observe |
+| `database_controller_access_pending_statements` | Statements the database still needs (`status.pendingStatements`); `0` means converged |
+| `database_controller_access_last_planned_timestamp_seconds` | Unix time the database was last planned against (`status.lastPlannedTime`), in either mode |
+| `database_controller_access_last_applied_timestamp_seconds` | Unix time of the last successful apply; never moves in Observe |
+
+A resource's series are removed when it is deleted, so a resource deleted
+while failing stops alerting. The reason for a failure is deliberately not a
+label: it changes value, and every change would leave the old series behind.
+It is on the resource (`kubectl describe databaseaccess`).
+
+`prometheusRule.enabled=true` installs `DatabaseAccessNotReady` (ready is `0`
+for 15 minutes) and `DatabaseAccessStale` (not planned against the database in
+two hours -- twice the one-hour drift interval). Stale keys on last-planned, not
+last-applied, because an Observe resource never applies. An optional third,
+`DatabaseAccessNotConverged` (pending statements for 2 hours), is off by
+default: in Observe, pending is expected until the cutover.
+
 ## Seeing what it will do
 
 ```sh

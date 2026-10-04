@@ -134,6 +134,38 @@ metrics:
     interval: 30s
     additionalLabels: {}
 
+# Alerts on the per-resource metrics. Requires the Prometheus operator CRDs,
+# and the metrics to be scraped (metrics.serviceMonitor above, or your own).
+prometheusRule:
+  enabled: false
+  additionalLabels: {}
+  rules:
+    # database_controller_access_ready == 0: the last reconcile failed, so the
+    # service may be missing access. 15m rides out a transient failure that the
+    # work queue's backoff retry clears on its own.
+    notReady:
+      enabled: true
+      for: 15m
+      severity: critical
+    # Not planned against the database for thresholdSeconds, in either mode
+    # (last_planned, not last_applied: Observe never applies). The drift
+    # interval is one hour, so 7200 is two missed drift passes.
+    stale:
+      enabled: true
+      thresholdSeconds: 7200
+      for: 10m
+      severity: warning
+    # pending_statements > 0 for `for`. 2h, not less: a fresh resource, or a
+    # spec edit, legitimately shows pending until the next reconcile, and an
+    # Enforce resource repairs drift within one drift interval, so only a
+    # count that survives two passes means it is not converging. Off by
+    # default: in Observe a non-zero count is expected until the cutover, and
+    # whether that should page is a per-install decision.
+    notConverged:
+      enabled: false
+      for: 2h
+      severity: warning
+
 # Log encoding: json for anything that ships logs, console for a local rig.
 logEncoder: json
 logLevel: info

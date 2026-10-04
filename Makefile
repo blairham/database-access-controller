@@ -22,6 +22,7 @@ helm-lint: ## Lint and render the chart, including with the toggles flipped.
 	helm template database-controller charts/database-controller --set autoscaling.enabled=true >/dev/null
 	helm template database-controller charts/database-controller --set podDisruptionBudget.maxUnavailable=1 >/dev/null
 	helm template database-controller charts/database-controller --set metrics.serviceMonitor.enabled=true >/dev/null
+	helm template database-controller charts/database-controller --set prometheusRule.enabled=true >/dev/null
 
 # Exactly the paths `generate` writes. NOT all of charts/ -- most of the chart
 # is hand-maintained, so diffing the directory made any ordinary edit to

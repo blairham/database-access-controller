@@ -1,0 +1,75 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "database-controller.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: database-controller
+      rules:
+        {{- with .Values.prometheusRule.rules.notReady }}
+        {{- if .enabled }}
+        # A service whose database access did not apply. Scraped series carry
+        # the exporting pod's labels, and after a leader failover the old
+        # leader's series lingers until it goes stale; `max by` collapses both
+        # to one alert per resource, keyed only by its identity.
+        - alert: DatabaseAccessNotReady
+          expr: max by (namespace, name) (database_controller_access_ready) == 0
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: "DatabaseAccess {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} is not Ready"
+            description: >-
+              The last reconcile failed for {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }}.
+              The service may be missing database access. The reason is on the resource:
+              kubectl -n {{ "{{" }} $labels.namespace {{ "}}" }} describe databaseaccess {{ "{{" }} $labels.name {{ "}}" }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.rules.stale }}
+        {{- if .enabled }}
+        # Reconciles happen at least hourly (the drift interval), so a last
+        # plan older than the threshold means the resource has stopped being
+        # reconciled -- a wedged leader, or every retry failing. NotReady
+        # covers a resource whose reconcile fails; this covers one that went
+        # quiet. Keyed on last_PLANNED, not last_applied: an Observe resource
+        # never applies, so last_applied would read as stale for every
+        # Observe resource within two hours while it reconciles fine.
+        - alert: DatabaseAccessStale
+          expr: time() - max by (namespace, name) (database_controller_access_last_planned_timestamp_seconds) > {{ .thresholdSeconds }}
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: "DatabaseAccess {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} has not been reconciled in {{ "{{" }} $value | humanizeDuration {{ "}}" }}"
+            description: >-
+              The drift interval is one hour, so a healthy resource is planned against the database at least hourly.
+              Check the controller's leader and logs, and the resource's Ready condition.
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.rules.notConverged }}
+        {{- if .enabled }}
+        # Pending statements that persist. In Observe this is a cutover that is
+        # not ready to switch to Enforce; in Enforce it is a statement that
+        # keeps failing or keeps being undone (the re-plan after each apply
+        # feeds it). Either way the database does not match the spec, but no
+        # access is known to be lost -- Ready covers that -- so it warns.
+        - alert: DatabaseAccessNotConverged
+          expr: max by (namespace, name) (database_controller_access_pending_statements) > 0
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: "DatabaseAccess {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} has {{ "{{" }} $value {{ "}}" }} pending statement(s)"
+            description: >-
+              The database does not match the spec. The pending statements are in the resource's status:
+              kubectl -n {{ "{{" }} $labels.namespace {{ "}}" }} get databaseaccess {{ "{{" }} $labels.name {{ "}}" }} -o jsonpath='{.status.pending}'
+        {{- end }}
+        {{- end }}
+{{- end }}

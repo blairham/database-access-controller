@@ -58,6 +58,7 @@ func setPending(da *dbv1alpha1.DatabaseAccess, pending []string) {
 		}
 		da.Status.Pending = append([]string(nil), capped...)
 	}
+	recordPlanned(da.Namespace, da.Name, len(pending), now.Time)
 
 	cond := metav1.Condition{
 		Type:               ConditionConverged,
@@ -93,6 +94,7 @@ func (r *Reconciler) observe(
 	// LastAppliedTime and AppliedPlanHash are history and stay.
 	da.Status.StatementsApplied = 0
 	da.Status.Warnings = nil
+	recordObserved(da.Namespace, da.Name)
 	setCondition(da, metav1.Condition{
 		Type:   ConditionReady,
 		Status: metav1.ConditionTrue,
