@@ -1,9 +1,5 @@
-# A read-only consumer of schemas another service owns.
-#
-# The interesting part is what the controller does that a one-shot grant does
-# not: it registers ALTER DEFAULT PRIVILEGES FOR ROLE against every role that
-# creates objects in these schemas, so a table or view added by a later
-# migration is readable without anyone re-running anything.
+# A read-only consumer of schemas another service owns. Default privileges are
+# registered for every owning role, so objects added later stay readable.
 apiVersion: database-controller.io/v1alpha1
 kind: DatabaseAccess
 metadata:

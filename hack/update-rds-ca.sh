@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 # Refresh the embedded RDS CA bundle (internal/rdsca/global-bundle.pem).
 #
-# AWS publishes one bundle covering every commercial region's RDS and Aurora
-# CAs. Every CA in it is a root valid until 2061 or later, so this needs
-# running only when AWS adds a CA -- a new region, or a new CA family.
-# `go test ./internal/rdsca/` afterwards checks the download is what it should be.
+# Needed only when AWS adds a CA. Run `go test ./internal/rdsca/` afterwards.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

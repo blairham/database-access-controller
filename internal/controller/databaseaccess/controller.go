@@ -32,13 +32,8 @@ const (
 	// ConditionReady reports whether the last reconcile applied cleanly.
 	ConditionReady = "Ready"
 
-	// driftInterval is how often a resource is re-reconciled with no event to
-	// prompt it.
-	//
-	// This is the part a Job could not do. A Job runs once and stops, so an
-	// ownership change made outside the platform -- a migration creating a view
-	// as the wrong role, a hand-run GRANT -- persisted until someone noticed.
-	// Re-planning on an interval turns that into a correction.
+	// driftInterval is how often a resource is re-reconciled with no event, so
+	// out-of-band changes to ownership or grants get corrected.
 	driftInterval = time.Hour
 )
 
@@ -51,10 +46,8 @@ type Reconciler struct {
 	// NewEngine opens the engine for a resource.
 	NewEngine EngineFactory
 
-	// Options are passed to the underlying controller. The zero value is
-	// correct in production; tests set SkipNameValidation because
-	// controller-runtime requires controller names to be unique per process
-	// and each test runs its own manager.
+	// Options are passed to the underlying controller. Tests set
+	// SkipNameValidation because each runs its own manager.
 	Options controller.Options
 }
 
@@ -71,9 +64,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	var da dbv1alpha1.DatabaseAccess
 	if err := r.Get(ctx, req.NamespacedName, &da); err != nil {
 		if apierrors.IsNotFound(err) {
-			// Gone -- deleted without a finalizer, or after ours was released.
-			// Its series go with it, or a resource deleted while failing would
-			// keep its alert firing forever.
+			// Drop its metric series, or a resource deleted while failing
+			// would alert forever.
 			forget(req.Namespace, req.Name)
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -83,10 +75,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return r.reconcileDelete(ctx, &da)
 	}
 
-	// The finalizer is only worth carrying when deletion has work to do.
-	// Holding one otherwise turns a stuck controller into a namespace that
-	// cannot be deleted.
-	// Observe never revokes, so it never needs the finalizer either.
+	// Only carry the finalizer when deletion has work to do; Observe never
+	// revokes.
 	if da.Spec.RevokeOnDelete && !observing(&da) && !controllerutil.ContainsFinalizer(&da, finalizer) {
 		controllerutil.AddFinalizer(&da, finalizer)
 		if err := r.Update(ctx, &da); err != nil {
@@ -122,11 +112,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		"warnings", len(res.Warnings),
 		"hash", p.Hash())
 
-	// Warnings are surfaced on the resource rather than left in a pod log. They
-	// are the difference between "access was granted" and "access was granted
-	// and will survive the next migration": a default privilege that could not
-	// be registered means the next DROP/CREATE of an object silently revokes
-	// access again.
+	// A skipped default privilege means objects recreated later lose access.
 	if len(res.Warnings) > 0 {
 		r.Recorder.Eventf(&da, "Warning", "PartiallyApplied",
 			"%d statement(s) were skipped; future objects may not inherit access", len(res.Warnings))
@@ -152,9 +138,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	setCondition(&da, meta)
 	recordPending(ctx, &da, eng, access)
 
-	// Recorded before the status write, not after it: the database is already
-	// in the state the plan describes, and that is what the metric reports. A
-	// failed status write returns an error and the retry records it again.
+	// Before the status write: the database already reflects the apply.
 	recordApplied(da.Namespace, da.Name, len(res.Warnings), now.Time)
 
 	if err := r.Status().Update(ctx, &da); err != nil {
@@ -170,8 +154,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, da *dbv1alpha1.Databas
 		return ctrl.Result{}, nil
 	}
 
-	// A resource switched to Observe after the finalizer was added is released
-	// without revoking: Observe writes nothing, deletion included.
+	// A resource switched to Observe is released without revoking.
 	if da.Spec.RevokeOnDelete && !observing(da) {
 		eng, err := r.NewEngine(ctx, da)
 		if err != nil {
@@ -204,8 +187,7 @@ func (r *Reconciler) fail(
 	reason string,
 	cause error,
 ) (ctrl.Result, error) {
-	// Before the status write, so a failure that also cannot write status --
-	// an API server outage on top of a database one -- still pages.
+	// Before the status write, so the metric moves even if that write fails.
 	recordFailed(da.Namespace, da.Name)
 
 	setCondition(da, metav1.Condition{
@@ -241,9 +223,8 @@ func setCondition(da *dbv1alpha1.DatabaseAccess, c metav1.Condition) {
 	da.Status.Conditions = append(da.Status.Conditions, c)
 }
 
-// Access flattens the spec into the engine-neutral shape. It is exported so
-// dbctl can plan from the same manifest the controller reconciles,
-// rather than reimplementing the mapping and drifting from it.
+// Access flattens the spec into the engine-neutral shape. Exported so dbctl
+// maps manifests exactly as the controller does.
 func Access(spec dbv1alpha1.DatabaseAccessSpec) engine.Access {
 	db := spec.Instance.Database
 	if db == "" {
@@ -252,10 +233,7 @@ func Access(spec dbv1alpha1.DatabaseAccessSpec) engine.Access {
 	a := engine.Access{
 		Database:  db,
 		Principal: spec.Role,
-		// spec.GrantRdsIam is RDS-specific; engine.Access.IAMAuth is the
-		// engine-neutral spelling of the same request (rds_iam on PostgreSQL,
-		// the AWSAuthenticationPlugin on MySQL). The mapping is deliberate.
-		IAMAuth: spec.GrantRdsIam,
+		IAMAuth:   spec.GrantRdsIam,
 	}
 	for _, g := range spec.Grants {
 		a.Namespaces = append(a.Namespaces, engine.Namespace{

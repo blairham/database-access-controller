@@ -29,8 +29,8 @@ Only the latest release receives fixes.
 
 Releases are signed with [cosign](https://github.com/sigstore/cosign) keyless
 signing: the signature is tied to the GitHub Actions workflow that built the
-release, not to a key someone could leak. Releases before the first signed one
-(`v0.0.0`) carry no signatures.
+release, not to a key someone could leak. `v0.0.0` predates signing and carries
+none.
 
 **Downloads.** `checksums.txt` is signed; it lists the digest of every archive.
 Verify the signature, then the archives against it:

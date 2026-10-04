@@ -1,9 +1,7 @@
 {{- if .Values.podDisruptionBudget }}
 {{/*
-⚠ A PDB on a single-replica Deployment is not protection, it is a wedge.
-maxUnavailable: 1 with replicas: 1 lets the only pod go; minAvailable: 1 with
-replicas: 1 blocks every voluntary eviction, so node drains hang. The chart
-defaults to two replicas, which is what makes a PDB meaningful here.
+A PDB only helps with more than one replica; with one, minAvailable: 1 blocks
+node drains.
 */}}
 apiVersion: policy/v1
 kind: PodDisruptionBudget

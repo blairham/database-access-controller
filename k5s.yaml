@@ -1,54 +1,20 @@
-# database-controller's rig — the controller against a real PostgreSQL, in a
-# real cluster.
-#
-# ── What this covers that the test suites do not ────────────────────────────
-#
-# `make test` and `make test-envtest` already cover the plan and the reconcile
-# contract, and `make test-integration` runs the generated SQL against a real
-# PostgreSQL. What none of them exercise is the deployment itself: the built
-# image actually starting, the generated RBAC actually being sufficient, leader
-# election against a real Lease, and the probe endpoints answering.
-#
-# This lane is for that. It is not where you debug SQL -- the integration suite
-# is faster and tells you more.
-#
-# ── Running it ──────────────────────────────────────────────────────────────
-#
-# LOCAL, which is the default and almost always what you want:
+# Rig: the controller, installed by its Helm chart, against a real PostgreSQL
+# in a kind cluster. It exercises the deployment (image, RBAC, leader election,
+# probes); debug SQL with `make test-integration` instead.
 #
 #   k5s up -f k5s.yaml
-#   make rig-install
-#   kubectl --context k5s/database-controller apply -f examples/rig-databaseaccess.yaml
-#   kubectl --context k5s/database-controller get databaseaccess -w
+#   make rig-install    # build, side-load into kind, helm upgrade --install
+#   make rig-test       # apply examples/rig-databaseaccess.yaml, wait for Ready
 #
-# THIS LANE RUNS POSTGRES ONLY. The controller is installed by Helm, because
-# that is how it is installed everywhere else and a rig that installed it some
-# other way would be testing a path nobody uses. `make rig-install` builds the
-# image, side-loads it into kind, and runs `helm upgrade --install` against the
-# rig context.
-#
-# replicaCount=1 there, because a single-node kind cluster has nowhere to put a
-# second replica, and console logging because you are reading it in a terminal.
-#
-# ⚠ THE RIG USES PASSWORD AUTH, AND THAT IS THE POINT OF THE OPTION. A local
-# PostgreSQL has no IAM, so `auth.method: password` is the only way the
-# controller can reach it. Production stays on the default, `iam`.
-#
-# ⚠ THIS LANE DOES NOT EXERCISE POD IDENTITY. That path needs real RDS and a
-# real association, so it only appears on dev EKS via `--remote`, which is
-# opt-in and needs a `remote:` block this repo deliberately does not carry yet.
-# A green local rig says nothing about whether the IAM path works.
+# The rig uses password auth, so it does not exercise the IAM path.
 apiVersion: k5s.dev/v1beta1
 kind: Stack
 name: database-controller
 context: kind-k8s
 
 services:
-  # The database the controller provisions into. Password auth, because there
-  # is no IAM here.
   postgres:
-    # AWS's mirror, not Docker Hub: Hub is blocked outright on some networks
-    # here and the pull fails with an i/o timeout.
+    # AWS's public mirror of Docker Hub.
     image: public.ecr.aws/docker/library/postgres:16-alpine
     ports:
       - 5432
@@ -62,12 +28,7 @@ services:
         - pg_isready
         - -U
         - db_provisioner
-        # -d IS REQUIRED, and leaving it off looks harmless. pg_isready
-        # defaults the database name to the USERNAME, so `-U db_provisioner`
-        # alone connects to a database called db_provisioner that does not
-        # exist. The probe still passes -- a FATAL means the server answered,
-        # which is all pg_isready asks -- while logging
-        # `FATAL: database "db_provisioner" does not exist` every two seconds.
-        # Measured on this rig: 214 of them, burying the real errors.
+        # Without -d, pg_isready targets a database named after the user and
+        # floods the server log with FATALs while still passing.
         - -d
         - appdb

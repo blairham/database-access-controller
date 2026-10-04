@@ -67,28 +67,17 @@ spec:
             properties:
               engine:
                 default: postgres
-                description: |-
-                  Engine is the database engine to provision against.
-
-                  The field is explicit even while only one value is valid, so adding an
-                  engine is an enum widening rather than a breaking change to a spec that
-                  had assumed PostgreSQL all along.
+                description: Engine is the database engine to provision against.
                 enum:
                 - postgres
                 type: string
               grantRdsIam:
                 default: true
                 description: |-
-                  GrantRdsIam grants the rds_iam role to Role, so the SERVICE can
-                  authenticate to the database with an IAM token instead of a password.
-
-                  ⚠ THIS IS NOT HOW THE CONTROLLER AUTHENTICATES. That is
-                  `instance.auth.method`, and the two are independent: the controller can
-                  connect with a password to a real RDS instance and still grant rds_iam,
-                  or connect with an IAM token and grant nothing.
-
-                  The rds_iam role exists only on RDS and Aurora. Set this false against a
-                  self-managed PostgreSQL, or the grant fails.
+                  GrantRdsIam grants rds_iam to Role so the service can authenticate with
+                  an IAM token. Independent of instance.auth.method, which is how the
+                  controller authenticates. rds_iam exists only on RDS and Aurora; set this
+                  false for a self-managed PostgreSQL.
                 type: boolean
               grants:
                 description: Grants are the per-schema privileges.
@@ -98,23 +87,16 @@ spec:
                   properties:
                     ownerOf:
                       description: |-
-                        OwnerOf makes the role the owner of the schema and of every relation in
-                        it: tables, sequences, views and materialized views are reassigned.
-
-                        Views matter and are easy to miss. Replacing a view requires ownership of
-                        it, so a migration doing DROP VIEW / CREATE OR REPLACE VIEW fails with
-                        "must be owner of view" even when every table it reads was reassigned
-                        correctly.
+                        OwnerOf makes the role the owner of the schema and of every table,
+                        sequence, view and materialized view in it, so its migrations can alter
+                        and replace them.
                       type: boolean
                     privileges:
                       description: |-
-                        Privileges granted on the schema and on the relations within it.
-
-                        USAGE and CREATE apply to the schema itself. The remainder are granted ON
-                        ALL TABLES, and the subset PostgreSQL accepts for sequences (SELECT,
-                        UPDATE, USAGE) is granted ON ALL SEQUENCES. Passing INSERT here and
-                        letting it reach the sequence grant is an error -- "invalid privilege type
-                        INSERT for sequence" -- so the split is done for you.
+                        Privileges granted on the schema and the relations in it. USAGE and
+                        CREATE apply to the schema (USAGE is always granted); the rest are granted
+                        ON ALL TABLES, and the subset a sequence accepts (SELECT, UPDATE, USAGE)
+                        ON ALL SEQUENCES.
                       items:
                         enum:
                         - SELECT
@@ -131,8 +113,8 @@ spec:
                       type: array
                     schema:
                       description: |-
-                        Schema is the PostgreSQL schema the privileges apply to. It is created if
-                        it does not exist and OwnerOf is true.
+                        Schema is the PostgreSQL schema the privileges apply to. With OwnerOf set
+                        it is created if missing.
                       minLength: 1
                       pattern: ^[a-z_][a-z0-9_]*$
                       type: string
@@ -142,7 +124,7 @@ spec:
                   type: object
                 type: array
               instance:
-                description: Instance is the RDS instance to provision on.
+                description: Instance is the PostgreSQL instance to provision on.
                 properties:
                   adminUser:
                     default: db_provisioner
@@ -152,11 +134,8 @@ spec:
                     type: string
                   auth:
                     description: |-
-                      Auth is how THE CONTROLLER authenticates as AdminUser.
-
-                      ⚠ Not to be confused with `spec.grantRdsIam`, which grants the rds_iam
-                      role to the service's own role. This field governs one connection: the
-                      controller's.
+                      Auth is how the controller authenticates as AdminUser. Unrelated to
+                      spec.grantRdsIam, which concerns the service's role.
                     properties:
                       method:
                         default: iam
@@ -167,11 +146,8 @@ spec:
                         type: string
                       passwordSecretRef:
                         description: |-
-                          PasswordSecretRef points at the Secret holding the admin password. It is
-                          required when Method is password and ignored otherwise. The Secret must
-                          live in the same namespace as this resource -- a controller that could
-                          read Secrets from any namespace on the say-so of a resource in one would
-                          be a privilege-escalation path.
+                          PasswordSecretRef points at the Secret holding the admin password, in
+                          this resource's namespace. Required when Method is password.
                         properties:
                           key:
                             default: password
@@ -205,22 +181,18 @@ spec:
                     type: integer
                   region:
                     description: |-
-                      Region is the AWS region, used to sign the IAM auth token. It is
-                      required when the admin connection authenticates with IAM -- which is
-                      the default -- and ignored entirely under password auth, where there is
-                      no token to sign and the instance need not be in AWS at all.
+                      Region is the AWS region the IAM auth token is signed for. Required for
+                      IAM auth (the default); ignored under password auth.
                     minLength: 1
                     type: string
                   sslMode:
                     default: verify-full
                     description: |-
-                      SSLMode is the libpq sslmode for the admin connection. The default,
-                      verify-full, checks the server's certificate against the system CAs
-                      plus Amazon's RDS CAs (built in) and checks that it names the endpoint.
-                      Use verify-ca when the endpoint is a CNAME the certificate does not
-                      name. require encrypts without verifying -- the admin credential then
-                      goes to whoever answers on the address -- and disable is for a local
-                      PostgreSQL without TLS.
+                      SSLMode is the libpq sslmode for the admin connection. verify-full (the
+                      default) checks the certificate against the system CAs plus the built-in
+                      RDS CAs and checks that it names the endpoint; verify-ca skips the name
+                      check, for an endpoint CNAME. require encrypts without verifying, and
+                      disable is for a local PostgreSQL without TLS.
                     enum:
                     - disable
                     - require
@@ -238,13 +210,9 @@ spec:
               mode:
                 default: Enforce
                 description: |-
-                  Mode is Enforce (apply the plan) or Observe (plan only: report in
-                  status what would change, and change nothing).
-
-                  Observe never executes a statement, never adds the revoke finalizer and
-                  never revokes on delete, even with revokeOnDelete set. Switching a
-                  resource from Observe to Enforce is the cutover; switching back stops
-                  all writes on the next reconcile.
+                  Mode is Enforce (apply the plan) or Observe (report in status what would
+                  change, and change nothing). Observe also never revokes on delete, even
+                  with revokeOnDelete set.
                 enum:
                 - Observe
                 - Enforce
@@ -252,11 +220,8 @@ spec:
               revokeOnDelete:
                 default: false
                 description: |-
-                  RevokeOnDelete drops the grants when this resource is deleted.
-
-                  Defaults to false, and that default is deliberate: role-owned objects
-                  break on DROP, so tearing down access is a decision a human makes with
-                  the data in front of them.
+                  RevokeOnDelete revokes the grants when this resource is deleted. The role
+                  itself is never dropped.
                 type: boolean
               role:
                 description: Role is the per-service PostgreSQL role to create and
@@ -279,9 +244,9 @@ spec:
                 type: string
               conditions:
                 description: |-
-                  Conditions follow the standard Kubernetes condition contract. Ready is
-                  true when the last reconcile applied every statement without a fatal
-                  error.
+                  Conditions are Ready (the last reconcile planned, and in Enforce applied,
+                  without a fatal error) and Converged (the database already matches the
+                  spec).
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -346,8 +311,8 @@ spec:
                 type: string
               lastPlannedTime:
                 description: |-
-                  LastPlannedTime is when the database was last read and planned against,
-                  in either mode. LastAppliedTime does not move in Observe; this does.
+                  LastPlannedTime is when the database was last planned against, in either
+                  mode.
                 format: date-time
                 type: string
               observedGeneration:
@@ -356,21 +321,15 @@ spec:
                 format: int64
                 type: integer
               pending:
-                description: |-
-                  Pending lists those statements, capped at the first 50. The list is
-                  truncated whenever it is shorter than pendingStatements.
+                description: Pending lists those statements, capped at the first 50.
                 items:
                   type: string
                 type: array
               pendingStatements:
                 description: |-
                   PendingStatements counts the statements the database still needs to
-                  match the spec, from the plan built on the last reconcile.
-
-                  In Observe it is the size of the plan that was not applied. In Enforce
-                  it comes from a fresh plan built after applying, so it is what the
-                  database STILL lacks -- non-zero there means a statement keeps failing
-                  or keeps being undone, not that the controller is behind.
+                  match the spec. In Enforce it comes from a re-plan after applying, so
+                  non-zero means a statement keeps failing or being undone.
                 type: integer
               statementsApplied:
                 description: StatementsApplied counts the statements in the last applied
@@ -378,10 +337,8 @@ spec:
                 type: integer
               warnings:
                 description: |-
-                  Warnings holds the best-effort statements that failed. These are not
-                  fatal, but they are the difference between "access was granted" and
-                  "access was granted and will survive the next migration", so they are
-                  surfaced rather than buried in a pod log.
+                  Warnings holds the best-effort statements that failed on the last apply,
+                  typically default privileges that keep future objects reachable.
                 items:
                   type: string
                 type: array

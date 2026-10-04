@@ -19,11 +19,8 @@ repos:
         args: ['--maxkb=500']
       - id: detect-private-key
 
-  # golangci-lint at commit time, via the upstream hooks (no local scripts).
-  # `golangci-lint-fmt` runs the formatters configured in .golangci.yml
-  # (gofumpt, gci, golines); `golangci-lint` lints only what changed since HEAD.
-  # Keep this rev in lockstep with the golangci-lint version in go.mod's `tool`
-  # block (see .golangci.yml).
+  # `golangci-lint-fmt` runs the formatters in .golangci.yml; `golangci-lint`
+  # lints what changed since HEAD. Keep the rev in step with go.mod's `tool`.
   - repo: https://github.com/golangci/golangci-lint
     rev: v2.14.0
     hooks:
@@ -36,15 +33,11 @@ repos:
     hooks:
       - id: go-mod-tidy-repo
 
-  # One golang pin per repo, at the root, that every go.mod must match: CI reads
-  # go-version-file: go.mod, so without this the two could build different Go
-  # with nothing noticing. check-conflict-markers replaces upstream's
-  # check-merge-conflict, which misses a committed diff3 base marker.
+  # go.mod and .tool-versions must pin the same Go. check-conflict-markers
+  # replaces upstream's check-merge-conflict, which misses diff3 base markers.
   - repo: https://github.com/blairham/pre-commit-hooks
     rev: v0.4.0
     hooks:
-      # Every .go file carries the two-line SPDX header; a file without one
-      # has no stated license once it is copied out of the repo.
       - id: check-license-headers
         args: [--license, Apache-2.0]
       - id: check-go-version-sync

@@ -22,10 +22,8 @@ output:
       colors: true
 
 linters:
-  # Every linter this repo runs is listed here, the same set as the sibling
-  # repos. It was adopted after the code was written, and the hook reports only
-  # what a commit introduces, so an older finding surfaces when its lines are
-  # next touched -- fix it then rather than adding a disable.
+  # The hook reports only what a commit introduces, so an older finding surfaces
+  # when its lines are next touched: fix it then rather than adding a disable.
   enable:
     # Core linters (enabled by default)
     - errcheck # Check for unchecked errors

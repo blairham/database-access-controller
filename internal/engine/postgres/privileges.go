@@ -37,9 +37,6 @@ var allPrivileges = map[string]bool{
 var schemaOnly = map[string]bool{PrivUsage: true, PrivCreate: true}
 
 // sequenceAccepted is the complete set PostgreSQL accepts on a sequence.
-// Granting anything else produces "invalid privilege type INSERT for sequence"
-// and aborts the transaction, so the caller's list is intersected with this
-// rather than passed through.
 var sequenceAccepted = map[string]bool{PrivSelect: true, PrivUpdate: true, PrivUsage: true}
 
 // PrivilegeSplit is one schema's privilege list divided by the object class

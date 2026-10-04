@@ -1,14 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Blair Hamilton
 // SPDX-License-Identifier: Apache-2.0
 
-// Command dbctl runs the controllers' planning logic from a terminal.
-//
-// It exists because the thing it replaces could not be inspected. Provisioning
-// lived as Helm template text inside a Job manifest: the only way to find out
-// what it would do to a database was to let it do it, and the only record
-// afterwards was the log of a Completed pod. `dbctl plan` prints the
-// exact statements the controller would run, against the real database, and
-// changes nothing.
+// Command dbctl runs the controller's plan from a terminal. `dbctl plan` prints
+// the statements the controller would run against the real database and
+// changes nothing; `dbctl apply` runs them.
 package main
 
 import (

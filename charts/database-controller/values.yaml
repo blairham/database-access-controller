@@ -1,15 +1,12 @@
-# Default values for database-controller.
-#
-# Layout and naming follow the aws-load-balancer-controller chart, so anyone
-# who has configured that one finds the same keys in the same places.
+# Default values for database-controller. Keys follow the
+# aws-load-balancer-controller chart.
 
 replicaCount: 2
 revisionHistoryLimit: 10
 
 image:
   repository: ghcr.io/blairham/database-controller
-  # Defaults to the chart's appVersion when unset. Pin a digest or an immutable
-  # tag anywhere that matters -- a moving tag makes a rollout unreproducible.
+  # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
 
@@ -19,10 +16,8 @@ nameOverride: ""
 fullnameOverride: ""
 
 autoscaling:
-  # Off, and it should stay off. Leader election means exactly one replica
-  # reconciles regardless of how many are running, so scaling out adds standbys
-  # rather than throughput. The key exists because the chart layout it follows
-  # has it.
+  # Leave off: only the leader reconciles, so scaling adds standbys, not
+  # throughput.
   enabled: false
   minReplicas: 2
   maxReplicas: 5
@@ -31,12 +26,9 @@ autoscaling:
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
-  # Annotations to add to the service account.
-  #
-  # On EKS this is where a Pod Identity Association or an IRSA role annotation
-  # goes. The IAM role needs rds-db:connect on the admin user's dbuser ARN.
-  # Nothing in the controller references AWS directly -- the SDK picks the
-  # credentials up from the environment.
+  # Annotations to add to the service account, such as the IRSA role ARN
+  # (EKS Pod Identity needs none). The IAM role needs rds-db:connect on the
+  # admin user's dbuser ARN.
   annotations: {}
   # The name of the service account to use. Generated from the fullname
   # template when unset and create is true.
@@ -47,21 +39,12 @@ rbac:
   create: true
 
 crds:
-  # Install the DatabaseAccess CRD as part of this release.
-  #
-  # ⚠ THIS CHART PUTS THE CRD IN templates/, NOT IN crds/, and that is a
-  # deliberate departure from the chart it otherwise follows. Helm installs
-  # crds/ once and then never upgrades or deletes it, so a schema change -- a
-  # new field, a widened engine enum -- silently never reaches a cluster that
-  # already has the chart, and the fix is a manual kubectl apply that someone
-  # has to know to run. In templates/ the CRD upgrades with everything else.
+  # Install the DatabaseAccess CRD. It lives in templates/, not crds/, so Helm
+  # upgrades it.
   install: true
 
-  # Keep the CRD when the release is uninstalled.
-  #
-  # Deleting a CRD deletes every DatabaseAccess with it, and each of those with
-  # revokeOnDelete set would run its revoke plan -- an uninstall that withdraws
-  # database access across the fleet. Leave this on.
+  # Keep the CRD on uninstall. Deleting it deletes every DatabaseAccess, and
+  # those with revokeOnDelete would revoke their grants.
   keep: true
 
 podSecurityContext:
@@ -91,8 +74,7 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
-# Spread replicas across nodes when affinity is not set explicitly. With two
-# replicas on one node a single eviction takes the standby with the leader.
+# Spread replicas across nodes when affinity is not set explicitly.
 configureDefaultAffinity: true
 
 topologySpreadConstraints: []
@@ -112,16 +94,14 @@ podAnnotations: {}
 podLabels: {}
 additionalLabels: {}
 
-# Which controllers this manager runs. An unrecognized name is refused at
-# startup rather than silently running nothing.
+# Which controllers this manager runs. An unknown name fails startup.
 controllers:
   - databaseaccess
 
 # Restrict the manager to one namespace. Empty watches all namespaces.
 watchNamespace: ""
 
-# Leader election. Leave on whenever replicas can exceed one, including during
-# a rollout: two managers reconciling one resource would race on the database.
+# Leave on whenever replicas can exceed one, including during a rollout.
 enableLeaderElection: true
 
 metrics:
@@ -140,27 +120,20 @@ prometheusRule:
   enabled: false
   additionalLabels: {}
   rules:
-    # database_controller_access_ready == 0: the last reconcile failed, so the
-    # service may be missing access. 15m rides out a transient failure that the
-    # work queue's backoff retry clears on its own.
+    # database_controller_access_ready == 0: the last reconcile failed.
     notReady:
       enabled: true
       for: 15m
       severity: critical
-    # Not planned against the database for thresholdSeconds, in either mode
-    # (last_planned, not last_applied: Observe never applies). The drift
-    # interval is one hour, so 7200 is two missed drift passes.
+    # Not planned against the database for thresholdSeconds (two missed
+    # hourly drift passes).
     stale:
       enabled: true
       thresholdSeconds: 7200
       for: 10m
       severity: warning
-    # pending_statements > 0 for `for`. 2h, not less: a fresh resource, or a
-    # spec edit, legitimately shows pending until the next reconcile, and an
-    # Enforce resource repairs drift within one drift interval, so only a
-    # count that survives two passes means it is not converging. Off by
-    # default: in Observe a non-zero count is expected until the cutover, and
-    # whether that should page is a per-install decision.
+    # pending_statements > 0 across two drift passes. Off by default: Observe
+    # resources show pending until their cutover.
     notConverged:
       enabled: false
       for: 2h
@@ -173,28 +146,16 @@ logLevel: info
 # Extra arguments appended to the manager's command line.
 extraArgs: []
 
-# Extra environment variables on the manager container.
-#
-# This is how the AWS credential source is pointed somewhere other than the
-# ambient one -- an EKS Pod Identity agent is discovered automatically, but a
-# rig running a stand-in agent on loopback has to be told.
+# Extra environment variables on the manager container, e.g. to point the AWS
+# SDK at a stand-in credential agent.
 extraEnv: []
 #  - name: AWS_CONTAINER_CREDENTIALS_FULL_URI
 #    value: http://127.0.0.1:1338/v1/credentials
 
-# Extra containers in the manager pod.
-#
-# The case this exists for is a credential agent. The AWS SDK refuses
-# AWS_CONTAINER_CREDENTIALS_FULL_URI on anything but loopback, so an agent
-# standing in for EKS Pod Identity cannot be its own Service -- it has to ride
-# in this pod.
-#
-# ⚠ podSecurityContext APPLIES TO THESE TOO. With runAsNonRoot: true set at pod
-# level, a sidecar whose image declares a non-numeric user fails with
-# CreateContainerConfigError ("image has non-numeric user, cannot verify user
-# is non-root") -- while the manager container starts and runs happily beside
-# it, so the pod looks half-up rather than misconfigured. Give such a sidecar
-# an explicit numeric runAsUser.
+# Extra containers in the manager pod, e.g. a credential agent sidecar (the AWS
+# SDK accepts AWS_CONTAINER_CREDENTIALS_FULL_URI only on loopback).
+# podSecurityContext applies to them: an image with a non-numeric user needs an
+# explicit numeric runAsUser.
 extraContainers: []
 
 extraVolumes: []

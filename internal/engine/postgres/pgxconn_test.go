@@ -11,9 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// pgxConn adapts a pgx connection to Execer and Inspector for tests that talk
-// to a real server. It is shared by the integration and equivalence suites,
-// which is why it carries both build tags.
+// pgxConn adapts a pgx connection to Execer and Inspector for the integration
+// and equivalence suites.
 type pgxConn struct{ c *pgx.Conn }
 
 func (p pgxConn) Exec(ctx context.Context, sql string, args ...any) error {
@@ -67,9 +66,8 @@ func (p pgxConn) RelationsNotOwnedBy(ctx context.Context, schema, owner string) 
 	return out, rows.Err()
 }
 
-// The ACL reads delegate to the production Conn, so the integration and
-// equivalence suites exercise the exact queries the controller runs rather
-// than a second copy of them.
+// The ACL reads delegate to the production Conn, so the suites run the same
+// queries the controller does.
 
 func (p pgxConn) prod() *Conn { return &Conn{conn: p.c} }
 

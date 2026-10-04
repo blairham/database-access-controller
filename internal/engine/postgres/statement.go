@@ -24,7 +24,7 @@ type Statement struct {
 	// Args are the positional parameters for SQL.
 	Args []any
 
-	// Why explains the statement. Printed by a dry run and by nothing else.
+	// Why explains the statement, for plan output.
 	Why string
 
 	// BestEffort downgrades a failure to a warning.
@@ -52,12 +52,7 @@ func (s *Statement) Rationale() string { return s.Why }
 // IsBestEffort reports whether a failure is a warning rather than fatal.
 func (s *Statement) IsBestEffort() bool { return s.BestEffort }
 
-// Tolerates reports whether err is one this statement expects.
-//
-// The script this replaces piped psql's stderr through `grep -v "already
-// exists"`, which suppressed the exit status for every error, not just that
-// one. Matching an explicit list keeps the narrow tolerance and drops the
-// blanket one.
+// Tolerates reports whether err matches one of the expected Ignore substrings.
 func (s *Statement) Tolerates(err error) bool {
 	if err == nil {
 		return true
@@ -74,7 +69,7 @@ func (s *Statement) Tolerates(err error) bool {
 // Apply runs the statement.
 func (s *Statement) Apply(ctx context.Context) error {
 	if s.exec == nil {
-		// A plan built for inspection only. Describe() is the whole product.
+		// A plan built for inspection only.
 		return nil
 	}
 	return s.exec.Exec(ctx, s.SQL, s.Args...)

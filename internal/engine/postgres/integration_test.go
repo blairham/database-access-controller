@@ -17,10 +17,8 @@ import (
 	"github.com/blairham/database-controller/internal/engine"
 )
 
-// These tests run the generated statements against a real PostgreSQL server.
-// Unit tests prove the SQL reads correctly; only a server proves it parses,
-// that the privilege split is one PostgreSQL accepts, and that the plan is
-// genuinely re-runnable.
+// These tests run the generated statements against a real PostgreSQL server,
+// proving the SQL parses, the privilege split is accepted, and plans re-run.
 //
 //	docker run --rm -d -p 5433:5432 -e POSTGRES_PASSWORD=test --name pgtest postgres:16-alpine
 //	PGTEST_DSN='postgres://postgres:test@127.0.0.1:5433/postgres' go test -tags integration ./internal/engine/postgres/
@@ -39,9 +37,8 @@ func connect(t *testing.T) pgxConn {
 	return pgxConn{c}
 }
 
-// seed builds a schema that reproduces the shape the real databases are in:
-// an app role that owns the relations, a schema owned by someone else, and a
-// view among the tables.
+// seed builds a schema owned by someone other than the app role that owns its
+// relations, with a view among the tables.
 func seed(t *testing.T, c pgxConn, schema, appRole string) {
 	t.Helper()
 	ctx := context.Background()
@@ -73,13 +70,8 @@ func seed(t *testing.T, c pgxConn, schema, appRole string) {
 	}
 }
 
-// dropRole removes a role and everything that depends on it.
-//
-// DROP ROLE alone is not enough and the reason is the same one that makes
-// spec.revokeOnDelete default to false: ALTER DEFAULT PRIVILEGES FOR ROLE x
-// leaves a pg_default_acl entry that counts as a dependency, so the role cannot
-// be dropped even after its schema is gone. DROP OWNED BY clears those entries
-// along with any remaining grants.
+// dropRole removes a role and everything that depends on it. DROP OWNED BY
+// first clears the default-privilege entries that would block DROP ROLE.
 func dropRole(t *testing.T, c pgxConn, role string) {
 	t.Helper()
 	stmt := fmt.Sprintf(`
@@ -145,9 +137,7 @@ func TestPlanExecutesAgainstRealPostgres(t *testing.T) {
 	}
 }
 
-// Re-running must be a no-op rather than an error. The Job this replaces was
-// re-run by Argo on every drift, so every statement had to tolerate existing
-// state; a controller re-runs far more often than that.
+// Re-running must be a no-op rather than an error.
 func TestPlanIsReRunnable(t *testing.T) {
 	ctx := context.Background()
 	c := connect(t)
@@ -176,9 +166,7 @@ func TestPlanIsReRunnable(t *testing.T) {
 	}
 }
 
-// Ownership reassignment must cover views and materialized views. Driving it
-// off pg_tables and pg_sequences misses both, and replacing a view requires
-// ownership of it.
+// Ownership reassignment must cover views and materialized views.
 func TestOwnershipReassignsViewsAndMatviews(t *testing.T) {
 	ctx := context.Background()
 	c := connect(t)
@@ -218,9 +206,8 @@ func TestOwnershipReassignsViewsAndMatviews(t *testing.T) {
 	}
 }
 
-// The privilege split must produce a sequence grant PostgreSQL accepts.
-// Passing INSERT through produces "invalid privilege type INSERT for sequence"
-// and aborts the whole transaction.
+// The privilege split must produce a sequence grant PostgreSQL accepts
+// (INSERT is invalid on a sequence).
 func TestSequenceGrantAcceptsTheSplitPrivileges(t *testing.T) {
 	ctx := context.Background()
 	c := connect(t)
@@ -256,16 +243,9 @@ func TestSequenceGrantAcceptsTheSplitPrivileges(t *testing.T) {
 	}
 }
 
-// A serial or identity sequence is auto-dependent on its table's column, and
-// PostgreSQL refuses to change its owner independently:
-//
-//	ERROR: cannot change owner of sequence "events_id_seq" (SQLSTATE 0A000)
-//
-// Its owner follows the table's, so reassigning the table is both necessary
-// and sufficient; emitting the ALTER at all is an error rather than merely
-// redundant. This was a live bug, found by diffing against the Job this engine
-// replaces -- that implementation never hit it because it reassigned tables
-// first and its sequence loop then found nothing left to do.
+// A serial or identity sequence follows its table's owner, and PostgreSQL
+// refuses to change it independently ("cannot change owner of sequence"), so
+// the plan must not reassign it.
 func TestOwnedSequencesAreNotReassigned(t *testing.T) {
 	ctx := context.Background()
 	c := connect(t)
@@ -310,8 +290,7 @@ func TestOwnedSequencesAreNotReassigned(t *testing.T) {
 	}
 }
 
-// Tables must be planned before sequences, so a standalone sequence is never
-// attempted ahead of the table whose reassignment would have settled it.
+// Tables are planned before sequences.
 func TestOwnershipPlansTablesBeforeSequences(t *testing.T) {
 	ctx := context.Background()
 	c := connect(t)
@@ -357,18 +336,8 @@ func TestOwnershipPlansTablesBeforeSequences(t *testing.T) {
 	}
 }
 
-// Re-applying must REPAIR a revoked grant, and this is why the plan is applied
-// on every reconcile rather than skipped when nothing appears to have changed.
-//
-// ⚠ DO NOT "OPTIMIZE" THIS BY COMPARING status.appliedPlanHash AND SKIPPING.
-// The plan is built from what the engine reads -- role existence, schema
-// existence, object owners -- and it does not read current grants. A revoked
-// privilege therefore produces a BYTE-IDENTICAL plan with an identical hash.
-// Measured on a rig: revoking USAGE left the hash at 79faccfc19bb167b, so a
-// hash-based skip would have silently stopped repairing the most common drift
-// there is.
-//
-// Re-issuing grants is cheap and GRANT is an upsert. Skipping is not.
+// A grant revoked by hand shows up in the next plan as exactly the statement
+// that repairs it, and re-applying restores it.
 func TestReapplyRepairsARevokedGrant(t *testing.T) {
 	ctx := context.Background()
 	c := connect(t)
@@ -394,10 +363,8 @@ func TestReapplyRepairsARevokedGrant(t *testing.T) {
 		t.Fatalf("applying: %v", err)
 	}
 
-	// The BASELINE is the plan once the role exists, not the first plan. The
-	// first one carries CREATE ROLE and the next one does not, so comparing
-	// against it would show a hash change that has nothing to do with the
-	// revoke under test.
+	// The baseline is the plan once the role exists; the first carries CREATE
+	// ROLE.
 	settled, err := e.BuildPlan(ctx, access)
 	if err != nil {
 		t.Fatalf("re-planning after the role exists: %v", err)
@@ -417,7 +384,7 @@ func TestReapplyRepairsARevokedGrant(t *testing.T) {
 		t.Fatal("USAGE was not granted by the first apply")
 	}
 
-	// Drift, the way it actually happens: someone revokes by hand.
+	// Drift: someone revokes by hand.
 	if err := c.Exec(ctx, `REVOKE USAGE ON SCHEMA itest7 FROM itest7_reader`); err != nil {
 		t.Fatalf("revoking: %v", err)
 	}
@@ -430,12 +397,6 @@ func TestReapplyRepairsARevokedGrant(t *testing.T) {
 		t.Fatalf("re-planning: %v", err)
 	}
 
-	// The plan is a diff, so drift is now VISIBLE in it: a settled database
-	// plans nothing, and the revoke brings back exactly the one statement that
-	// repairs it. This used to assert the opposite -- that the hash did NOT
-	// change, because the plan never read grants and a revoke was invisible to
-	// it. That is why re-applying on every reconcile was mandatory; it is still
-	// what the controller does, and the repair below still pins it.
 	if settled.Len() != 0 {
 		t.Errorf("settled plan has %d statement(s), want 0:\n%s", settled.Len(), settled.Describe())
 	}
@@ -452,13 +413,9 @@ func TestReapplyRepairsARevokedGrant(t *testing.T) {
 	}
 }
 
-// connectAsProvisioner returns a connection as a NON-superuser CREATEROLE
-// admin, shaped like the real db_provisioner.
-//
-// Every other test here connects as the postgres superuser, and a superuser
-// holds every membership implicitly -- so it can never see a failure that
-// comes from the admin's membership in a role. The first greenfield ownerOf
-// resource in stg failed exactly that way, against RDS, as db_provisioner.
+// connectAsProvisioner returns a connection as a non-superuser CREATEROLE
+// admin, like RDS's. A superuser holds every membership implicitly, so it
+// cannot see membership failures.
 func connectAsProvisioner(t *testing.T, su pgxConn) pgxConn {
 	t.Helper()
 	ctx := context.Background()
@@ -493,9 +450,8 @@ func connectAsProvisioner(t *testing.T, su pgxConn) pgxConn {
 }
 
 // dropProvisionedRole drops a role the provisioner granted database
-// privileges to. DROP OWNED BY, run as the superuser, leaves a database grant
-// whose GRANTOR is the provisioner in place, and that grant alone blocks
-// DROP ROLE ("privileges for database ..."), so the grantor revokes it first.
+// privileges to. The grantor revokes first: DROP OWNED BY as the superuser
+// leaves the provisioner's database grant, which blocks DROP ROLE.
 func dropProvisionedRole(t *testing.T, su pgxConn, role string) {
 	t.Helper()
 	ctx := context.Background()
@@ -520,10 +476,8 @@ func dropProvisionedRole(t *testing.T, su pgxConn, role string) {
 	dropRole(t, su, role)
 }
 
-// A brand-new role with ownerOf, provisioned by a non-superuser admin: the
-// plan creates the role, then must give the admin a membership it can act
-// through before CREATE SCHEMA ... AUTHORIZATION. Without the self-grant this
-// fails with `must be able to SET ROLE`, the stg canary error.
+// A brand-new ownerOf role provisioned by a non-superuser admin needs the
+// admin's self-grant before CREATE SCHEMA ... AUTHORIZATION.
 func TestGreenfieldOwnerOfAsANonSuperuserAdmin(t *testing.T) {
 	ctx := context.Background()
 	su := connect(t)
@@ -576,9 +530,8 @@ func TestGreenfieldOwnerOfAsANonSuperuserAdmin(t *testing.T) {
 	}
 }
 
-// A role the admin did not create and holds no ADMIN OPTION on cannot be fixed
-// by the controller. Planning must fail with the one-time grant an
-// administrator has to run, before anything is applied.
+// A role the admin holds no ADMIN OPTION on fails planning with the one-time
+// grant an administrator has to run.
 func TestOwnerOfOnAForeignRoleNamesTheRunbookGrant(t *testing.T) {
 	ctx := context.Background()
 	su := connect(t)
@@ -669,10 +622,8 @@ func ownerSelfSetup(t *testing.T, role, other, schema string) (*Engine, engine.A
 	return e, access, as
 }
 
-// A table the owner creates after convergence has a NULL ACL -- PostgreSQL
-// never records an owner's rights -- but the owner can use it. The diff must
-// not count it as lacking, or it plans the GRANT on every reconcile and never
-// converges: what stg showed for trader_tools and trading_reports_ro.
+// A table the owner creates after convergence has a NULL ACL; the diff must
+// not count it as lacking, or the plan never converges.
 func TestTablesTheOwnerCreatesLaterDoNotReopenThePlan(t *testing.T) {
 	ctx := context.Background()
 	e, access, as := ownerSelfSetup(t, "itest_selfown_app", "itest_selfown_other", "itest_selfown")
@@ -687,9 +638,7 @@ func TestTablesTheOwnerCreatesLaterDoNotReopenThePlan(t *testing.T) {
 	}
 }
 
-// Skipping what the grantee owns must not hide a real gap: once ownership
-// moves to someone else, the old owner's implicit rights are gone, and the
-// next plan has to grant them back -- then settle again.
+// Once ownership moves away, the old owner's rights must be granted back.
 func TestOwnershipMovingAwayBringsTheGrantBack(t *testing.T) {
 	ctx := context.Background()
 	e, access, as := ownerSelfSetup(t, "itest_moved_app", "itest_moved_other", "itest_moved")
@@ -717,10 +666,8 @@ func TestOwnershipMovingAwayBringsTheGrantBack(t *testing.T) {
 	}
 }
 
-// A role that does not exist yet must still be granted on tables that do.
-// The owner exclusion compares relowner with the grantee's oid, which is NULL
-// for a role not created yet; with `<>` instead of IS DISTINCT FROM every
-// relation would drop out and the GRANT would silently never be planned.
+// A role that does not exist yet must still be granted on tables that do
+// (its oid is NULL; hence IS DISTINCT FROM).
 func TestANewRoleIsGrantedOnExistingTables(t *testing.T) {
 	ctx := context.Background()
 	su := connect(t)

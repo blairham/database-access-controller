@@ -20,20 +20,16 @@ import (
 	"github.com/blairham/database-controller/internal/engine"
 )
 
-// metricsRun makes every resource name in this file unique to one test run.
-// The gauges are process-global and a test's manager stops before its cleanup
-// deletes the resource, so nothing forgets the series; under -count=N a reused
-// name would let run 2 pass on the value run 1 left behind -- a test satisfied
-// by stale state rather than by its own reconcile.
+// metricsRun makes resource names unique per run: the gauges are
+// process-global, so under -count=N a reused name could pass on a stale value.
 var metricsRun atomic.Int64
 
 func uniqueName(base string) string {
 	return fmt.Sprintf("%s-%d", base, metricsRun.Add(1))
 }
 
-// series reads one resource's value off a vector without creating it.
-// WithLabelValues would mint the series it is asked about, which turns every
-// "is it gone?" assertion into a pass.
+// series reads one resource's value off a vector without creating it, as
+// WithLabelValues would.
 func series(t *testing.T, vec *prometheus.GaugeVec, name string) (float64, bool) {
 	t.Helper()
 	ch := make(chan prometheus.Metric, 256)
@@ -66,8 +62,7 @@ func waitForSeries(t *testing.T, vec *prometheus.GaugeVec, name string, want flo
 	})
 }
 
-// A clean apply is what the alert treats as healthy. It must read 1, report no
-// skipped statements, and stamp a last-applied time from this reconcile.
+// A clean apply reads ready 1, no warnings, and a fresh last-applied time.
 func TestMetricsReportAReadyResource(t *testing.T) {
 	f := &fakeEngine{}
 	startManager(t, f.factory())
@@ -88,8 +83,7 @@ func TestMetricsReportAReadyResource(t *testing.T) {
 	}
 }
 
-// A connection failure is the case the alert exists for. It has to read 0, and
-// it must not invent a last-applied time for an apply that never happened.
+// A connection failure reads ready 0 with no last-applied time.
 func TestMetricsReportAConnectionFailure(t *testing.T) {
 	startManager(t, func(context.Context, *dbv1alpha1.DatabaseAccess) (engine.Engine, error) {
 		return nil, errors.New("dial tcp 10.0.0.1:5432: i/o timeout")
@@ -111,9 +105,7 @@ func TestMetricsReportAConnectionFailure(t *testing.T) {
 	}
 }
 
-// Skipped best-effort statements still count as Ready -- access was granted --
-// but the count is the early warning that the next DROP/CREATE of an object
-// may silently revoke it again.
+// Skipped best-effort statements are still Ready, with a warnings count.
 func TestMetricsCountSkippedStatements(t *testing.T) {
 	f := &fakeEngine{warnings: []string{"permission denied to set role"}}
 	startManager(t, f.factory())
@@ -124,8 +116,7 @@ func TestMetricsCountSkippedStatements(t *testing.T) {
 	waitForSeries(t, warningsGauge, da.Name, 1)
 }
 
-// Recovery must clear the alert on the same series. A reason label would have
-// left the failing series behind, still reading 0.
+// Recovery must clear the alert on the same series.
 func TestMetricsRecoverOnTheSameSeries(t *testing.T) {
 	var healthy atomic.Bool
 	f := &fakeEngine{}
@@ -143,9 +134,7 @@ func TestMetricsRecoverOnTheSameSeries(t *testing.T) {
 	waitForSeries(t, readyGauge, da.Name, 1)
 }
 
-// A deleted resource must stop exporting. Otherwise one deleted while failing
-// pages forever. Both deletion paths are covered: no finalizer (the object
-// simply disappears) and revokeOnDelete (the finalizer is released by us).
+// A deleted resource stops exporting, with and without the revoke finalizer.
 func TestMetricsAreRemovedWithTheResource(t *testing.T) {
 	f := &fakeEngine{}
 	startManager(t, f.factory())
@@ -174,11 +163,8 @@ func TestMetricsAreRemovedWithTheResource(t *testing.T) {
 	}
 }
 
-// An Observe resource is Ready=True (reason Observed) and reconciling every
-// hour while writing nothing. Its ready series must read 1, or NotReady pages
-// for every resource in a cutover; its liveness comes from last_planned,
-// because it never applies and so must not grow a last_applied series; and
-// pending must carry the plan size, which is what a cutover is waiting on.
+// An Observe resource reads ready 1, has last_planned but no last_applied, and
+// reports the plan size as pending.
 func TestMetricsReportAnObservedResource(t *testing.T) {
 	c := &countingEngine{pending: 3}
 	startManager(t, c.factory())
@@ -206,10 +192,8 @@ func TestMetricsReportAnObservedResource(t *testing.T) {
 	}
 }
 
-// In Enforce the pending gauge comes from the re-plan after applying and must
-// equal the status it mirrors. The fake engine plans one step every time, so
-// the re-plan reports 1 still pending -- the shape of a statement that keeps
-// being undone -- and last_planned must be stamped in this mode too.
+// In Enforce the pending gauge comes from the re-plan after applying (the fake
+// always plans one step) and last_planned is stamped too.
 func TestMetricsPendingMatchesStatusInEnforce(t *testing.T) {
 	f := &fakeEngine{}
 	startManager(t, f.factory())

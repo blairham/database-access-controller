@@ -83,10 +83,9 @@ func (ca testCA) serverCert(t *testing.T, dnsNames []string, ips []net.IP) tls.C
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
-// fakeTLSServer accepts PostgreSQL connections on loopback, agrees to TLS,
-// completes the handshake and hangs up. It reports whether the first
-// handshake succeeded, which is the only thing these tests ask: whether the
-// client accepted the server's certificate.
+// fakeTLSServer accepts PostgreSQL connections on loopback, completes a TLS
+// handshake and hangs up, reporting whether the client accepted the
+// certificate.
 func fakeTLSServer(t *testing.T, cert tls.Certificate) (port int32, handshake <-chan bool) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -213,10 +212,8 @@ func TestConnectVerifiesServerCertificate(t *testing.T) {
 	}
 }
 
-// TestDefaultRootCAsTrustRDS pins the wiring the fake-server tests replace:
-// out of the box, a verify-full connection must trust the RDS CAs. Swapping
-// rootCAs for the system pool would pass every other test here and fail every
-// RDS connection.
+// TestDefaultRootCAsTrustRDS pins that, out of the box, verify-full trusts the
+// RDS CAs; the fake-server tests substitute rootCAs and cannot see this.
 func TestDefaultRootCAsTrustRDS(t *testing.T) {
 	pool, err := rootCAs()
 	if err != nil {

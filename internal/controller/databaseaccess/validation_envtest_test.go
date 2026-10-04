@@ -15,15 +15,7 @@ import (
 	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
 )
 
-// The controller does the same work against RDS and against a PostgreSQL
-// running anywhere else; the only thing that varies is how the admin
-// connection authenticates. Region is the one AWS-shaped field in the spec,
-// and it belongs to the IAM path alone -- so it has to be required there and
-// absent-able everywhere else.
-//
-// Both halves matter. A rule that only accepted the in-cluster shape would let
-// an IAM instance through with no region and fail at reconcile time, which is
-// the failure this schema exists to prevent.
+// instance.region is required for IAM auth and optional for password auth.
 func TestInstanceRegionIsRequiredOnlyForIAM(t *testing.T) {
 	ctx := context.Background()
 

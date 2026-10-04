@@ -1,32 +1,22 @@
 name: CI
 
-# One workflow holds everything that gates a merge, so there is one file to
-# read and one check to require. Splitting pre-commit or the tests into their
-# own workflow buys nothing and costs a second place to keep in sync.
+# Everything that gates a merge.
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    # A squash merge lands a tree no pull request ever built — the branch was
-    # tested before the squash, and `main` may have moved under it since — so
-    # the merge result gets its own run rather than inheriting the branch's
-    # green tick.
+    # A squash merge lands a tree no pull request built, so main gets its own run.
     branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  # A superseded push is not worth finishing; only the newest commit matters.
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Pre-commit is the lint surface: the same pinned golangci hooks run locally
-  # as the commit gate and here as the merge gate. No standalone
-  # golangci-lint-action — a parallel lint config drifts. It is also the only
-  # job that looks at *every* file rather than at Go: trailing whitespace,
-  # secrets, conflict markers, the toolchain pin.
+  # The same pinned hooks as the local commit gate, including golangci-lint.
   pre-commit:
     name: Pre-commit
     runs-on: ubuntu-latest
@@ -41,11 +31,8 @@ jobs:
       - name: Run pre-commit hooks
         uses: blairham/go-pre-commit@5788df636d2726ba06d337393503a7fe6b3451c2 # v4.6.7
 
-  # Gating happens inside the jobs, never with a workflow-level `paths:`
-  # filter: a required check that never runs reports as *pending forever*
-  # rather than as passed, which makes a docs-only pull request unmergeable.
-  # Anything unrecognised counts as code, so when this is wrong it is wrong in
-  # the direction of running the tests.
+  # Gating happens inside the jobs, not with `paths:`, because a required check
+  # that never runs stays pending forever. Anything unrecognized counts as code.
   changes:
     name: Detect changed files
     needs: pre-commit
@@ -59,8 +46,6 @@ jobs:
       - id: filter
         name: Is any of this code?
         env:
-          # On a merge to main there is no pull request; `before` is the commit
-          # main pointed at, which makes the diff the merge itself.
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
           code=false
@@ -68,10 +53,7 @@ jobs:
             echo "push to $GITHUB_REF_NAME — running everything"
             code=true
           elif ! git cat-file -e "$BASE" 2>/dev/null; then
-            # No usable base commit — a force push, or a shallow fetch that did
-            # not reach it. `git diff` would fail here and print nothing, and an
-            # empty diff is indistinguishable from "only prose changed", so this
-            # would silently skip every test. The safe answer is to run them.
+            # No usable base (a force push): an empty diff would skip every test.
             echo "base commit $BASE is not present — running everything"
             code=true
           else
@@ -102,11 +84,6 @@ jobs:
       - name: Build both binaries
         if: needs.changes.outputs.code == 'true'
         run: make build
-      # controller-gen owns the CRD and the ClusterRole rules, and
-      # hack/sync-chart.sh copies them into the chart. Stale output means the
-      # chart asks for permissions the controller does not have, or ships a
-      # schema the types no longer match -- both of which fail at runtime
-      # rather than in review.
       - name: Verify the generated files are current
         if: needs.changes.outputs.code == 'true'
         run: make check-generated
@@ -120,9 +97,6 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: make test-envtest
 
-  # The integration suite needs a real PostgreSQL, because unit tests cannot
-  # tell you whether the generated DDL parses or whether the privilege split is
-  # one PostgreSQL accepts.
   integration:
     name: PostgreSQL integration
     needs: changes
@@ -154,10 +128,7 @@ jobs:
           PGTEST_DSN: postgres://postgres:test@127.0.0.1:5433/postgres
         run: go test -race -tags integration ./internal/engine/postgres/ -v
 
-  # The controller is consumed as a CONTAINER, so a Dockerfile that stopped
-  # building would break every install while the Go tests stayed green. Build
-  # only; a v* tag publishes (goreleaser.yml). No `if:` needed: a job that
-  # `needs` a skipped job is itself skipped.
+  # Build only; a v* tag publishes (goreleaser.yml).
   image:
     name: Build image
     needs: [changes, test]
@@ -174,10 +145,7 @@ jobs:
           push: false
           tags: database-controller:ci
 
-  # The chart is the install path: a template error ships as a failed install
-  # on someone else's cluster. `make helm-lint` lints it and renders it with
-  # each toggle flipped, so a branch that only runs under non-default values is
-  # exercised too.
+  # Lints the chart and renders it with each toggle flipped.
   charts:
     name: Helm chart
     needs: changes

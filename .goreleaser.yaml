@@ -5,8 +5,7 @@ version: 2
 project_name: database-controller
 
 builds:
-  # The controller runs in a cluster: Linux only, and in no archive — it exists
-  # to be copied into the image.
+  # Linux only, and image only.
   - id: manager
     binary: manager
     main: ./cmd/manager
@@ -48,8 +47,7 @@ archives:
     name_template: >-
       dbctl_ {{- title .Os }}_ {{- if eq .Arch "amd64" }}x86_64 {{- else }}{{ .Arch }}{{ end }}
 
-# macOS signing + notarization, matching the sibling repos. Gated on isEnvSet,
-# so releases still succeed unsigned when the secrets are absent.
+# macOS signing and notarization, skipped when the secrets are absent.
 notarize:
   macos:
     - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
@@ -64,12 +62,8 @@ notarize:
         key: "{{.Env.MACOS_NOTARY_KEY}}"
         wait: true
 
-# The image the Helm chart pulls: ghcr.io/blairham/database-controller:<version>.
-#
-# dockers_v2 traps: --snapshot builds per-arch and never the index, so verify
-# against a real registry; the release workflow needs
-# docker/setup-buildx-action, because the runner's default driver cannot push a
-# manifest list; SBOM attestation is on by default, so it is off.
+# The image the Helm chart pulls. --snapshot never builds the multi-arch index,
+# and SBOM attestation is on by default, so it is turned off.
 dockers_v2:
   - id: image
     ids:
@@ -80,14 +74,11 @@ dockers_v2:
     dockerfile: Dockerfile
     flags:
       - --target=release
-    # arm64 as well as amd64: an unpinned pod that lands on the other arch
-    # cannot pull an image built for one platform.
     platforms:
       - linux/amd64
       - linux/arm64
     sbom: false
-    # `latest` moves only on a real release, never a prerelease tag. The
-    # version tag comes off the git tag, so it is immutable by construction.
+    # `latest` moves only on a real release, never a prerelease.
     tags:
       - "{{ .Version }}"
       - "{{ if not .Prerelease }}latest{{ end }}"
@@ -104,10 +95,8 @@ dockers_v2:
 checksum:
   name_template: 'checksums.txt'
 
-# Keyless cosign signatures, from the release workflow's own GitHub identity:
-# no key to store or leak, and the certificate names the exact workflow and tag
-# that produced the release. Signing checksums.txt covers every archive, since
-# it lists each one's digest. See SECURITY.md for how to verify.
+# Keyless cosign signatures from the release workflow's identity. Signing
+# checksums.txt covers every archive. See SECURITY.md to verify.
 signs:
   - cmd: cosign
     signature: "${artifact}.sigstore.json"
@@ -118,8 +107,7 @@ signs:
       - "--yes"
     artifacts: checksum
 
-# Each published image, by digest. cosign attaches the signature to the image
-# in ghcr.io.
+# Each published image, by digest.
 docker_signs:
   - cmd: cosign
     args:

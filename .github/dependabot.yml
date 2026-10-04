@@ -25,19 +25,13 @@ updates:
     schedule:
       interval: monthly
     ignore:
-      # The builder tracks the Go line pinned in go.mod (1.26.x). A new Go
-      # minor (1.26 -> 1.27) moves go.mod, .tool-versions and every sibling
-      # repo together, by hand — not as a lone Dockerfile bump. Digest and
-      # patch updates still come through. The image is pulled through AWS's
-      # public mirror, so Dependabot names it docker/library/golang -- a bare
-      # `golang` here matches nothing.
+      # A Go minor bump moves go.mod and .tool-versions by hand, not as a lone
+      # Dockerfile bump. The mirror path makes the name docker/library/golang.
       - dependency-name: docker/library/golang
         update-types:
           - version-update:semver-major
           - version-update:semver-minor
-      # k5s.yaml's PostgreSQL is the same major the integration suite runs in
-      # CI (postgres:16-alpine) and that the engine's SQL is verified against.
-      # Moving it alone would make the rig test a server CI never does.
+      # Stay on the PostgreSQL major CI's integration suite uses.
       - dependency-name: docker/library/postgres
         update-types:
           - version-update:semver-major

@@ -87,10 +87,8 @@ func (f fakeInspector) RelationsNotOwnedBy(_ context.Context, schema, owner stri
 	return out, nil
 }
 
-// planText returns only the SQL of a plan, with the rationale comments
-// stripped. Asserting against Describe() would match prose: the rationale for
-// GRANT CONNECT mentions "CREATE SCHEMA IF NOT EXISTS", which is enough to make
-// a test looking for a CREATE SCHEMA statement pass on a plan that has none.
+// planText returns only the SQL of a plan. Describe() includes rationale prose,
+// which can mention statements the plan does not contain.
 func planText(t *testing.T, e *Engine, a engine.Access) string {
 	t.Helper()
 	p, err := e.BuildPlan(context.Background(), a)
@@ -139,10 +137,8 @@ func TestBuildPlanOmitsIAMGrantWhenNotRequested(t *testing.T) {
 	mustNotContain(t, got, "rds_iam")
 }
 
-// The default privilege must be registered FOR ROLE each role that actually
-// creates objects. Registered against the provisioner instead, it binds to a
-// role that creates nothing and never fires -- the failure that left
-// reporting_ro without SELECT after a view was replaced.
+// The default privilege must be registered FOR ROLE each role that owns
+// objects; against the provisioner it never fires.
 func TestBuildPlanRegistersDefaultPrivilegesPerOwningRole(t *testing.T) {
 	e := New(nil, fakeInspector{
 		owners: map[string][]string{"app": {"rds_superuser", "app_writer"}},
@@ -195,9 +191,7 @@ func TestDefaultPrivilegeStatementsAreBestEffort(t *testing.T) {
 }
 
 // Views and materialized views must be reassigned along with tables and
-// sequences. Driving the reassignment off pg_tables and pg_sequences skips
-// them, and replacing a view requires ownership of it -- so a migration doing
-// DROP VIEW / CREATE VIEW fails even when every table it reads was reassigned.
+// sequences; replacing a view requires owning it.
 func TestBuildPlanReassignsViewsAndMatviews(t *testing.T) {
 	e := New(nil, fakeInspector{
 		schemas: map[string]bool{"ingest": true},
@@ -226,10 +220,8 @@ func TestBuildPlanReassignsViewsAndMatviews(t *testing.T) {
 	mustNotContain(t, got, `"already_mine"`)
 }
 
-// CREATE SCHEMA is emitted only when the schema is genuinely absent. A bare
-// CREATE SCHEMA IF NOT EXISTS ... AUTHORIZATION checks the SET ROLE privilege
-// before the existence short-circuit, so on re-runs against a legacy role it
-// fails with "must be able to SET ROLE" with nothing to do.
+// CREATE SCHEMA is emitted only when the schema is absent: IF NOT EXISTS ...
+// AUTHORIZATION still checks SET ROLE first.
 func TestBuildPlanCreatesSchemaOnlyWhenAbsent(t *testing.T) {
 	absent := New(nil, fakeInspector{schemas: map[string]bool{}}, nil)
 	got := planText(t, absent, engine.Access{
@@ -327,10 +319,8 @@ func TestPlanHashChangesWithContent(t *testing.T) {
 	}
 }
 
-// An ownerOf role registers no default privileges for itself. An owner holds
-// every privilege on what it creates and PostgreSQL does not even record the
-// self-grant, so `FOR ROLE app_role ... TO app_role` would be a statement with
-// no effect -- and one that, in stg, never read as converged.
+// An ownerOf role registers no default privileges for itself: the self-grant
+// has no effect and is never recorded, so it would never read as converged.
 func TestOwnerRegistersNoDefaultPrivilegesForItself(t *testing.T) {
 	e := New(nil, fakeInspector{schemas: map[string]bool{}}, nil)
 	got := planText(t, e, engine.Access{
@@ -345,8 +335,7 @@ func TestOwnerRegistersNoDefaultPrivilegesForItself(t *testing.T) {
 	mustNotContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role"`)
 }
 
-// Other owners in an owned schema still get defaults: their future objects
-// are not the principal's, so without a default it would lose access to them.
+// Other owners in an owned schema still get defaults.
 func TestOwnedSchemaRegistersDefaultsForOtherOwnersOnly(t *testing.T) {
 	e := New(nil, fakeInspector{
 		schemas: map[string]bool{"app": true},
@@ -368,9 +357,7 @@ func TestOwnedSchemaRegistersDefaultsForOtherOwnersOnly(t *testing.T) {
 	mustNotContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role"`)
 }
 
-// A consumer that does not own the schema must NOT have a default registered
-// for itself: it creates nothing there, so the entry would never fire and
-// would only add a statement that can fail on a role it cannot assume.
+// A consumer that does not own the schema gets no default for itself.
 func TestReadOnlyAccessDoesNotAddThePrincipalAsAnOwner(t *testing.T) {
 	e := New(nil, fakeInspector{
 		schemas: map[string]bool{"app": true},
@@ -388,8 +375,7 @@ func TestReadOnlyAccessDoesNotAddThePrincipalAsAnOwner(t *testing.T) {
 	mustNotContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "reporting_ro"`)
 }
 
-// The owner list is deduplicated: an owner enumerated twice must not produce
-// the same statement twice.
+// The owner list is deduplicated.
 func TestDefaultPrivilegeOwnersAreDeduplicated(t *testing.T) {
 	e := New(nil, fakeInspector{
 		schemas: map[string]bool{"app": true},
@@ -420,12 +406,8 @@ func TestDefaultPrivilegeOwnersAreDeduplicated(t *testing.T) {
 	}
 }
 
-// CREATE ROLE is omitted when the role already exists.
-//
-// Relying on the tolerated "already exists" error instead works, but every
-// re-run then writes ERROR: role "x" already exists to the SERVER log -- one
-// line per resource per reconcile, forever, in the log an operator greps
-// during an incident.
+// CREATE ROLE is omitted when the role already exists, keeping the server log
+// quiet.
 func TestCreateRoleIsOmittedWhenTheRoleExists(t *testing.T) {
 	e := New(nil, fakeInspector{roles: map[string]bool{"app_role": true}}, nil)
 	got := planText(t, e, engine.Access{Database: "appdb", Principal: "app_role"})
@@ -440,9 +422,7 @@ func TestCreateRoleIsEmittedWhenTheRoleIsAbsent(t *testing.T) {
 	mustContain(t, got, `CREATE ROLE "app_role" WITH LOGIN;`)
 }
 
-// The tolerance stays as a backstop: between the existence check and the
-// write, a concurrent reconcile or a human can create the role, and that race
-// must not fail the plan.
+// "already exists" is still tolerated, for a race with a concurrent create.
 func TestCreateRoleStillToleratesAConcurrentCreate(t *testing.T) {
 	e := New(nil, fakeInspector{roles: map[string]bool{}}, nil)
 	p, err := e.BuildPlan(context.Background(), engine.Access{Database: "appdb", Principal: "app_role"})
@@ -461,13 +441,8 @@ func TestCreateRoleStillToleratesAConcurrentCreate(t *testing.T) {
 	t.Fatal("no CREATE ROLE statement in the plan")
 }
 
-// Asking for rds_iam on a server that has no such role must fail while
-// PLANNING, not part-way through applying.
-//
-// Discovered mid-apply, the plan aborts after CREATE ROLE has already run and
-// the error -- `role "rds_iam" does not exist` -- is true but says nothing
-// about the likely cause. This is the failure the grantRdsIam /
-// instance.auth.method naming collision invites.
+// Asking for rds_iam on a server that has no such role fails while planning,
+// not part-way through applying.
 func TestGrantRdsIamFailsPlanningWhenTheRoleIsAbsent(t *testing.T) {
 	e := New(nil, fakeInspector{roles: map[string]bool{}}, nil)
 	_, err := e.BuildPlan(context.Background(), engine.Access{
@@ -536,9 +511,7 @@ var diffAccess = engine.Access{
 	}},
 }
 
-// A database that already matches the spec must produce an EMPTY plan. This is
-// what Observe mode reports as converged; before the plan was a diff, every
-// GRANT was re-emitted on every pass and a plan could never come back empty.
+// A database that already matches the spec produces an empty plan.
 func TestBuildPlanIsEmptyWhenTheDatabaseAlreadyMatches(t *testing.T) {
 	e := New(nil, convergedInspector(), nil)
 	p, err := e.BuildPlan(context.Background(), diffAccess)
@@ -550,8 +523,7 @@ func TestBuildPlanIsEmptyWhenTheDatabaseAlreadyMatches(t *testing.T) {
 	}
 }
 
-// Each missing piece must bring back exactly its own statement and nothing
-// else -- the diff is per grant, not all-or-nothing.
+// Each missing piece brings back exactly its own statement.
 func TestBuildPlanPlansOnlyWhatIsMissing(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -597,11 +569,9 @@ func TestBuildPlanPlansOnlyWhatIsMissing(t *testing.T) {
 // principal.
 const selfGrant = `GRANT "app_role" TO CURRENT_USER WITH INHERIT TRUE, SET TRUE;`
 
-// A role created by this plan is a role the admin holds only ADMIN OPTION on
-// (PostgreSQL 16, createrole_self_grant unset), so ownerOf work for it needs
-// the self-grant -- after CREATE ROLE, before anything done as the role. This
-// is the stg canary failure: CREATE SCHEMA ... AUTHORIZATION, "must be able to
-// SET ROLE".
+// On a role this plan creates the admin holds only ADMIN OPTION (PostgreSQL
+// 16), so ownerOf work needs the self-grant after CREATE ROLE and before
+// anything done as the role.
 func TestGreenfieldOwnerOfGrantsTheAdminMembershipBeforeActingAsTheRole(t *testing.T) {
 	e := New(nil, fakeInspector{roles: map[string]bool{"rds_iam": true}}, nil)
 	got := planText(t, e, diffAccess)
@@ -628,9 +598,8 @@ func TestOwnerOfPlansNoSelfGrantWhenTheAdminCanActAsTheRole(t *testing.T) {
 	mustNotContain(t, planText(t, New(nil, f, nil), diffAccess), "TO CURRENT_USER")
 }
 
-// Missing either half -- SET or INHERIT -- plans the self-grant, provided the
-// admin holds ADMIN OPTION to give it. The runbook's one-time grant on a role
-// the provisioner created leaves INHERIT false, which is the second case.
+// Missing either SET or INHERIT plans the self-grant, provided the admin holds
+// ADMIN OPTION.
 func TestOwnerOfPlansTheSelfGrantWhenSetOrInheritIsMissing(t *testing.T) {
 	for name, acc := range map[string]AdminAccess{
 		"no SET":     {Admin: "prov", Inherit: true, Grant: true},
@@ -649,9 +618,8 @@ func TestOwnerOfPlansTheSelfGrantWhenSetOrInheritIsMissing(t *testing.T) {
 	}
 }
 
-// No ADMIN OPTION means the admin cannot fix its own membership. That must
-// fail at plan time with the statement an administrator has to run -- not a
-// bare 42501 halfway through an apply.
+// Without ADMIN OPTION, planning fails with the statement an administrator
+// has to run.
 func TestOwnerOfFailsPlanningWithTheRunbookGrantWhenTheAdminCannotGrantItself(t *testing.T) {
 	f := convergedInspector()
 	delete(f.tablesOK, "app/app_role/"+strings.Join(tableGrantKinds, ""))
@@ -666,10 +634,8 @@ func TestOwnerOfFailsPlanningWithTheRunbookGrantWhenTheAdminCannotGrantItself(t 
 	}
 }
 
-// The check is only made when ownerOf has something to do. A converged
-// database plans nothing, so it must not plan -- or fail on -- a membership
-// it does not need. This keeps Observe at zero on roles whose runbook grant
-// left INHERIT false.
+// The membership is only checked when ownerOf has something to do, so a
+// converged database plans nothing.
 func TestConvergedOwnerOfNeedsNoMembership(t *testing.T) {
 	f := convergedInspector()
 	f.access = map[string]AdminAccess{"app_role": {Admin: "db_provisioner"}} // no SET, INHERIT or ADMIN

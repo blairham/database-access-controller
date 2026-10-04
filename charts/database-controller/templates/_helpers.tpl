@@ -50,11 +50,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
-Default pod anti-affinity: prefer to keep replicas off the same node.
-
-Preferred rather than required, because a single-node cluster -- a kind rig, a
-laptop -- would otherwise leave the second replica Pending forever with no
-obvious cause. An explicit `affinity` in values replaces this wholesale.
+Default pod anti-affinity: prefer (not require, so single-node clusters work)
+to keep replicas off the same node. An explicit `affinity` replaces it.
 */}}
 {{- define "database-controller.defaultAffinity" -}}
 podAntiAffinity:

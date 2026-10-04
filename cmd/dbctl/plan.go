@@ -45,12 +45,8 @@ func loadAccess(path string) (*dbv1alpha1.DatabaseAccess, error) {
 	return &da, nil
 }
 
-// openEngine connects the way the manifest asks, but resolves a password from
-// the environment rather than from a Secret.
-//
-// dbctl runs on a workstation, where there is no cluster to read a Secret from
-// and no reason to require one. The manifest still selects the method, so the
-// same file drives both paths.
+// openEngine connects the way the manifest asks, but reads a password from the
+// PGPASSWORD environment variable rather than a Secret.
 func openEngine(ctx context.Context, da *dbv1alpha1.DatabaseAccess) (engine.Engine, error) {
 	inst := da.Spec.Instance
 	adminUser := inst.AdminUser

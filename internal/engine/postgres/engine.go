@@ -11,9 +11,8 @@ import (
 	"github.com/blairham/database-controller/internal/plan"
 )
 
-// Engine provisions roles, schemas and grants on RDS PostgreSQL and Aurora
-// PostgreSQL. The two are one implementation: they speak the same wire protocol
-// and take the same DDL.
+// Engine provisions roles, schemas and grants on PostgreSQL, including RDS and
+// Aurora.
 type Engine struct {
 	exec      Execer
 	inspect   Inspector
@@ -63,12 +62,8 @@ func (e *Engine) Validate(a engine.Access) error {
 }
 
 // BuildPlan returns the ordered statements that bring the database to the state
-// Access describes. Every statement is safe to re-run.
-//
-// The plan is a DIFF: a statement appears only when the database does not
-// already hold what it would grant (see the ACL reads on Inspector). An empty
-// plan therefore means "nothing to do", which is what Observe mode reports and
-// what lets a converged database show zero pending statements.
+// Access describes. The plan is a diff: a statement appears only when the
+// database lacks what it would grant, so a converged database plans nothing.
 func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, error) {
 	if err := e.Validate(a); err != nil {
 		return nil, err
@@ -77,18 +72,8 @@ func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, er
 	role := QuoteIdent(a.Principal)
 	p := &plan.Plan{}
 
-	// PostgreSQL has no CREATE ROLE IF NOT EXISTS, so the role is looked up
-	// first and the statement omitted when it is already there.
-	//
-	// Relying on the tolerated error instead works, but every re-run then
-	// writes `ERROR: role "x" already exists` to the SERVER log -- on a
-	// reconciling controller that is one line per resource per interval,
-	// forever, in the log an operator greps during an incident. Checking first
-	// keeps it quiet.
-	//
-	// The tolerance stays as a backstop: between this read and the write, a
-	// concurrent reconcile or a human can create the role, and that race
-	// should not fail the plan.
+	// Checked first so re-runs don't log `role already exists` on the server;
+	// the tolerated error covers a race with a concurrent create.
 	exists, err := e.inspect.RoleExists(ctx, a.Principal)
 	if err != nil {
 		return nil, fmt.Errorf("checking role %q: %w", a.Principal, err)
@@ -103,17 +88,8 @@ func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, er
 	}
 
 	if a.IAMAuth {
-		// Checked while planning, not discovered mid-apply.
-		//
-		// rds_iam is created by RDS and Aurora; a self-managed PostgreSQL has
-		// no such role. Letting the GRANT find out means the plan aborts after
-		// CREATE ROLE has already run, with `role "rds_iam" does not exist` --
-		// true, but it does not say the likely cause, and the caller is left
-		// with a half-applied plan to reason about.
-		//
-		// This is the failure the grantRdsIam/auth.method naming collision
-		// invites: the two fields read as one setting, so grantRdsIam gets
-		// left at its default against a database that cannot honor it.
+		// rds_iam exists only on RDS and Aurora. Checking while planning gives
+		// a clear error instead of a half-applied plan.
 		hasRdsIam, err := e.inspect.RoleExists(ctx, "rds_iam")
 		if err != nil {
 			return nil, fmt.Errorf("checking for the rds_iam role: %w", err)
@@ -140,9 +116,8 @@ func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, er
 		}
 	}
 
-	// CONNECT opens a session. CREATE is needed for CREATE SCHEMA IF NOT
-	// EXISTS: PostgreSQL checks the privilege before it checks existence, so
-	// even a no-op call from a service's own migrator requires it.
+	// CREATE is needed even for a no-op CREATE SCHEMA IF NOT EXISTS: the
+	// privilege is checked before existence.
 	dbPrivs, err := e.inspect.DatabasePrivileges(ctx, a.Database, a.Principal)
 	if err != nil {
 		return nil, fmt.Errorf("reading privileges of %q on database %q: %w", a.Principal, a.Database, err)
@@ -155,10 +130,8 @@ func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, er
 		})
 	}
 
-	// Namespaces are planned into their own plans first, because whether the
-	// admin needs a membership in the principal depends on what they plan:
-	// ownerOf work is done AS the role, everything else is not. A converged
-	// database plans nothing here, so it plans no membership either.
+	// Namespaces are planned first because the admin needs membership in the
+	// principal only if ownerOf work is actually planned.
 	var nsSteps []plan.Step
 	ownedWork := false
 	for _, ns := range a.Namespaces {
@@ -184,23 +157,12 @@ func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, er
 // addAdminMembership makes sure the connecting admin can act as the principal
 // before any ownerOf statement needs to.
 //
-// PostgreSQL 16 gives a CREATEROLE role that creates another role only an
-// ADMIN OPTION membership in it; SET and INHERIT come only if the server's
-// createrole_self_grant says so, and its default is empty. So the admin that
-// just ran CREATE ROLE cannot run `CREATE SCHEMA ... AUTHORIZATION` for that
-// role ("must be able to SET ROLE"), nor grant on the schema the role then
-// owns ("permission denied for schema"). The first is exactly how the first
-// greenfield ownerOf resource failed against RDS.
-//
-// ADMIN OPTION is enough to grant the missing membership to oneself, so the
-// plan does that, once, before the namespace statements. The grant names
-// INHERIT TRUE explicitly: SET alone was measured insufficient for the schema
-// grant ownerOf plans.
-//
-// A role the admin holds no ADMIN OPTION on (one created by someone else, and
-// never given the one-time grant) cannot be fixed from here. That is a hard
-// failure at plan time, naming the statement an administrator must run,
-// rather than a bare 42501 halfway through applying.
+// On PostgreSQL 16 a CREATEROLE admin gets only ADMIN OPTION on the roles it
+// creates (createrole_self_grant is empty by default), so it cannot SET ROLE
+// for CREATE SCHEMA ... AUTHORIZATION or inherit the privileges needed to grant
+// on the schema the role owns. ADMIN OPTION is enough to grant itself both. A
+// role it holds no ADMIN OPTION on fails at plan time with the statement an
+// administrator must run.
 func (e *Engine) addAdminMembership(ctx context.Context, p *plan.Plan, principal string, exists bool) error {
 	role := QuoteIdent(principal)
 	grant := &Statement{
@@ -250,11 +212,7 @@ func (e *Engine) addNamespace(ctx context.Context, p *plan.Plan, principal strin
 		if err != nil {
 			return fmt.Errorf("checking schema %q: %w", ns.Name, err)
 		}
-		// Only emit CREATE SCHEMA when it is genuinely missing. A bare CREATE
-		// SCHEMA IF NOT EXISTS ... AUTHORIZATION checks the SET ROLE privilege
-		// before the existence short-circuit, so on re-runs against a role the
-		// controller did not create it fails with `must be able to SET ROLE`
-		// even though there is nothing to do.
+		// Not IF NOT EXISTS: that still checks SET ROLE before existence.
 		if !exists {
 			p.Add(&Statement{
 				SQL:  fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s", schema, role),
@@ -320,15 +278,8 @@ func (e *Engine) addNamespace(ctx context.Context, p *plan.Plan, principal strin
 }
 
 // addDefaultPrivileges registers ALTER DEFAULT PRIVILEGES once per role that
-// actually creates objects in the schema.
-//
-// FOR ROLE is the whole point and is easy to omit. Without it PostgreSQL
-// records the entry against the CURRENT role -- the provisioner -- so the
-// default only ever applies to objects the provisioner itself created. It
-// creates none: every schema is populated by its owning app role. The safety
-// net then never fires anywhere, in any schema, and the only thing granting
-// access is the one-shot GRANT ON ALL TABLES above, which does not survive the
-// next migration that replaces an object.
+// owns objects in the schema. FOR ROLE is required: without it the default
+// binds to the provisioner, which creates nothing.
 func (e *Engine) addDefaultPrivileges(
 	ctx context.Context,
 	p *plan.Plan,
@@ -340,21 +291,13 @@ func (e *Engine) addDefaultPrivileges(
 		return fmt.Errorf("enumerating owners of schema %q: %w", schema, err)
 	}
 
-	// The principal is NOT added for a schema it is about to own. That used to
-	// register `FOR ROLE principal ... TO principal` in one pass, but a default
-	// an owner grants to itself has no effect (see below), so there is nothing
-	// to register. Other owners in the schema are what defaults are for.
-
 	seen := make(map[string]bool, len(owners))
 	for _, owner := range owners {
 		if seen[owner] {
 			continue
 		}
 		seen[owner] = true
-		// A default privilege an owner grants to itself does nothing: an owner
-		// holds every privilege on what it creates, and PostgreSQL does not
-		// even record the self-grant on new objects. Planning it only adds a
-		// statement, and an INHERIT dependency, with no effect on access.
+		// A default an owner grants to itself has no effect.
 		if owner == principal {
 			continue
 		}
@@ -376,10 +319,8 @@ func (e *Engine) addDefaultPrivileges(
 				objType,
 				owner,
 			),
-			// ALTER DEFAULT PRIVILEGES FOR ROLE x requires the admin role to
-			// hold x's privileges, and it does not hold all of them. Fatal here
-			// would take provisioning down for every service the moment one
-			// unreachable owner appeared.
+			// The admin may not hold every owner's privileges; one unreachable
+			// owner must not fail the plan.
 			BestEffort: true,
 			exec:       e.exec,
 		})
@@ -408,11 +349,8 @@ func (e *Engine) addOwnership(ctx context.Context, p *plan.Plan, principal, sche
 	return nil
 }
 
-// BuildRevokePlan withdraws the grants again.
-//
-// It revokes and does not DROP. A role that owns objects cannot be dropped, and
-// reassigning its objects to someone else is a decision that needs a human
-// looking at the data.
+// BuildRevokePlan withdraws the grants. It never drops the role: a role that
+// owns objects cannot be dropped.
 func (e *Engine) BuildRevokePlan(ctx context.Context, a engine.Access) (*plan.Plan, error) {
 	if err := e.Validate(a); err != nil {
 		return nil, err

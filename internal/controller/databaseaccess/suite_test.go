@@ -4,16 +4,8 @@
 //go:build envtest
 
 // Package databaseaccess's controller tests run against a real Kubernetes API
-// server via envtest.
-//
-// This is the layer unit tests cannot reach. It exercises the CRD schema as the
-// API server actually enforces it -- defaults, enums, required fields -- and
-// the reconcile loop as controller-runtime actually drives it: status
-// subresource writes, conditions, finalizer handling and deletion. None of that
-// is visible from a function call.
-//
-// No database is involved. The engine is faked, because what is under test here
-// is the controller contract, not the SQL.
+// server via envtest, covering the CRD schema as enforced and the reconcile
+// contract. The engine is faked; no database is involved.
 //
 //	go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path
 //	KUBEBUILDER_ASSETS=$(...) go test -tags envtest ./internal/controller/...
@@ -79,9 +71,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// eventually polls until cond returns true or the deadline passes. The
-// reconciler runs asynchronously in a manager, so every assertion about what it
-// did has to wait for it.
+// eventually polls until cond returns true or the deadline passes.
 func eventually(t *testing.T, timeout time.Duration, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
