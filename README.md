@@ -63,6 +63,14 @@ The controller connects as the admin role using an IAM auth token from Pod
 Identity, reads the database's current state, builds a plan, applies it, and
 records what it did in `status`.
 
+The admin needs `CREATEROLE` and the privileges it hands out. For `ownerOf` it
+must also be able to act *as* the service role (`SET` and `INHERIT`). On a
+role it creates, it gets only `ADMIN OPTION` from PostgreSQL 16, so the plan
+grants itself the rest (`GRANT <role> TO CURRENT_USER WITH INHERIT TRUE, SET
+TRUE`). A role someone else created needs a one-time
+`GRANT <role> TO <admin> WITH ADMIN TRUE, INHERIT TRUE, SET TRUE` from an
+administrator; until then planning fails and says so.
+
 ## Authentication
 
 The admin connection uses an RDS IAM token by default, minted in-process from

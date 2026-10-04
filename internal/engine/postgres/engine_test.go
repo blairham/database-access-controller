@@ -27,6 +27,18 @@ type fakeInspector struct {
 	schemaPrivs map[string][]string // "schema/grantee"
 	tablesOK    map[string]bool     // "schema/grantee/kinds" -> no relation lacks a privilege
 	defaults    map[string][]string // "owner/schema/objtype/grantee"
+
+	// access is the admin's standing per role. A role absent from the map
+	// reads as full access -- what a superuser sees, and what every test
+	// written before this read existed implicitly assumed.
+	access map[string]AdminAccess
+}
+
+func (f fakeInspector) AdminAccessTo(_ context.Context, role string) (AdminAccess, error) {
+	if a, ok := f.access[role]; ok {
+		return a, nil
+	}
+	return AdminAccess{Admin: "admin", Set: true, Inherit: true, Grant: true}, nil
 }
 
 func (f fakeInspector) RoleIsMemberOf(_ context.Context, member, group string) (bool, error) {
@@ -315,12 +327,11 @@ func TestPlanHashChangesWithContent(t *testing.T) {
 	}
 }
 
-// A greenfield owned schema must register its default privileges in the SAME
-// pass that creates it. The owner enumeration runs against the database as it
-// is before the plan, where the schema does not exist and therefore has no
-// owners at all -- so without adding the principal explicitly, the first run
-// registers nothing and only a later reconcile converges.
-func TestGreenfieldOwnedSchemaRegistersDefaultsInOnePass(t *testing.T) {
+// An ownerOf role registers no default privileges for itself. An owner holds
+// every privilege on what it creates and PostgreSQL does not even record the
+// self-grant, so `FOR ROLE app_role ... TO app_role` would be a statement with
+// no effect -- and one that, in stg, never read as converged.
+func TestOwnerRegistersNoDefaultPrivilegesForItself(t *testing.T) {
 	e := New(nil, fakeInspector{schemas: map[string]bool{}}, nil)
 	got := planText(t, e, engine.Access{
 		Database:  "appdb",
@@ -331,25 +342,15 @@ func TestGreenfieldOwnedSchemaRegistersDefaultsInOnePass(t *testing.T) {
 	})
 
 	mustContain(t, got, `CREATE SCHEMA "app" AUTHORIZATION "app_role";`)
-	mustContain(
-		t,
-		got,
-		`ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT INSERT, SELECT ON TABLES TO "app_role";`,
-	)
-	mustContain(
-		t,
-		got,
-		`ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON SEQUENCES TO "app_role";`,
-	)
+	mustNotContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role"`)
 }
 
-// On an existing schema the principal is still added, because the ownership
-// reassignment further down the same plan makes it the owner of relations the
-// enumeration attributed to someone else.
-func TestOwnedSchemaAddsThePrincipalToTheDefaultPrivilegeOwners(t *testing.T) {
+// Other owners in an owned schema still get defaults: their future objects
+// are not the principal's, so without a default it would lose access to them.
+func TestOwnedSchemaRegistersDefaultsForOtherOwnersOnly(t *testing.T) {
 	e := New(nil, fakeInspector{
 		schemas: map[string]bool{"app": true},
-		owners:  map[string][]string{"app": {"legacy_owner"}},
+		owners:  map[string][]string{"app": {"legacy_owner", "app_role"}},
 	}, nil)
 	got := planText(t, e, engine.Access{
 		Database:  "appdb",
@@ -364,11 +365,7 @@ func TestOwnedSchemaAddsThePrincipalToTheDefaultPrivilegeOwners(t *testing.T) {
 		got,
 		`ALTER DEFAULT PRIVILEGES FOR ROLE "legacy_owner" IN SCHEMA "app" GRANT SELECT ON TABLES TO "app_role";`,
 	)
-	mustContain(
-		t,
-		got,
-		`ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON TABLES TO "app_role";`,
-	)
+	mustNotContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role"`)
 }
 
 // A consumer that does not own the schema must NOT have a default registered
@@ -391,18 +388,18 @@ func TestReadOnlyAccessDoesNotAddThePrincipalAsAnOwner(t *testing.T) {
 	mustNotContain(t, got, `ALTER DEFAULT PRIVILEGES FOR ROLE "reporting_ro"`)
 }
 
-// The owner list is deduplicated: a principal already enumerated as an owner
-// must not produce the same statement twice.
+// The owner list is deduplicated: an owner enumerated twice must not produce
+// the same statement twice.
 func TestDefaultPrivilegeOwnersAreDeduplicated(t *testing.T) {
 	e := New(nil, fakeInspector{
 		schemas: map[string]bool{"app": true},
-		owners:  map[string][]string{"app": {"app_role"}},
+		owners:  map[string][]string{"app": {"legacy_owner", "legacy_owner"}},
 	}, nil)
 	p, err := e.BuildPlan(context.Background(), engine.Access{
 		Database:  "appdb",
-		Principal: "app_role",
+		Principal: "reporting_ro",
 		Namespaces: []engine.Namespace{
-			{Name: "app", Privileges: []string{"SELECT"}, Owner: true},
+			{Name: "app", Privileges: []string{"SELECT"}},
 		},
 	})
 	if err != nil {
@@ -413,7 +410,7 @@ func TestDefaultPrivilegeOwnersAreDeduplicated(t *testing.T) {
 	for _, s := range p.Steps() {
 		if strings.Contains(
 			s.Describe(),
-			`ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT SELECT ON TABLES`,
+			`ALTER DEFAULT PRIVILEGES FOR ROLE "legacy_owner" IN SCHEMA "app" GRANT SELECT ON TABLES`,
 		) {
 			count++
 		}
@@ -580,8 +577,10 @@ func TestBuildPlanPlansOnlyWhatIsMissing(t *testing.T) {
 			delete(f.tablesOK, "app/app_role/"+strings.Join(sequenceGrantKinds, ""))
 		}, `GRANT SELECT, UPDATE, USAGE ON ALL SEQUENCES IN SCHEMA "app" TO "app_role";`},
 		{"one default privilege", func(f *fakeInspector) {
-			f.defaults["app_role/app/r/app_role"] = []string{"SELECT", "INSERT", "UPDATE"}
-		}, `ALTER DEFAULT PRIVILEGES FOR ROLE "app_role" IN SCHEMA "app" GRANT DELETE, INSERT, SELECT, UPDATE ON TABLES TO "app_role";`},
+			f.owners["app"] = []string{"app_role", "legacy_owner"}
+			f.defaults["legacy_owner/app/r/app_role"] = []string{"SELECT", "INSERT", "UPDATE"}
+			f.defaults["legacy_owner/app/S/app_role"] = []string{"SELECT", "UPDATE", "USAGE"}
+		}, `ALTER DEFAULT PRIVILEGES FOR ROLE "legacy_owner" IN SCHEMA "app" GRANT DELETE, INSERT, SELECT, UPDATE ON TABLES TO "app_role";`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := convergedInspector()
@@ -592,4 +591,108 @@ func TestBuildPlanPlansOnlyWhatIsMissing(t *testing.T) {
 			}
 		})
 	}
+}
+
+// selfGrant is the membership statement ownerOf needs before acting as the
+// principal.
+const selfGrant = `GRANT "app_role" TO CURRENT_USER WITH INHERIT TRUE, SET TRUE;`
+
+// A role created by this plan is a role the admin holds only ADMIN OPTION on
+// (PostgreSQL 16, createrole_self_grant unset), so ownerOf work for it needs
+// the self-grant -- after CREATE ROLE, before anything done as the role. This
+// is the stg canary failure: CREATE SCHEMA ... AUTHORIZATION, "must be able to
+// SET ROLE".
+func TestGreenfieldOwnerOfGrantsTheAdminMembershipBeforeActingAsTheRole(t *testing.T) {
+	e := New(nil, fakeInspector{roles: map[string]bool{"rds_iam": true}}, nil)
+	got := planText(t, e, diffAccess)
+
+	create := strings.Index(got, `CREATE ROLE "app_role" WITH LOGIN;`)
+	grant := strings.Index(got, selfGrant)
+	schema := strings.Index(got, `CREATE SCHEMA "app" AUTHORIZATION "app_role";`)
+	if create < 0 || grant < 0 || schema < 0 {
+		t.Fatalf("plan is missing a step (create=%d grant=%d schema=%d):\n%s", create, grant, schema, got)
+	}
+	if create >= grant || grant >= schema {
+		t.Errorf("want CREATE ROLE < self-grant < CREATE SCHEMA, got %d, %d, %d:\n%s", create, grant, schema, got)
+	}
+	if n := strings.Count(got, "TO CURRENT_USER"); n != 1 {
+		t.Errorf("self-grant planned %d times, want once:\n%s", n, got)
+	}
+}
+
+// An existing role the admin can already act as needs nothing.
+func TestOwnerOfPlansNoSelfGrantWhenTheAdminCanActAsTheRole(t *testing.T) {
+	f := convergedInspector()
+	delete(f.tablesOK, "app/app_role/"+strings.Join(tableGrantKinds, "")) // some ownerOf work
+	f.access = map[string]AdminAccess{"app_role": {Admin: "prov", Set: true, Inherit: true}}
+	mustNotContain(t, planText(t, New(nil, f, nil), diffAccess), "TO CURRENT_USER")
+}
+
+// Missing either half -- SET or INHERIT -- plans the self-grant, provided the
+// admin holds ADMIN OPTION to give it. The runbook's one-time grant on a role
+// the provisioner created leaves INHERIT false, which is the second case.
+func TestOwnerOfPlansTheSelfGrantWhenSetOrInheritIsMissing(t *testing.T) {
+	for name, acc := range map[string]AdminAccess{
+		"no SET":     {Admin: "prov", Inherit: true, Grant: true},
+		"no INHERIT": {Admin: "prov", Set: true, Grant: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := convergedInspector()
+			delete(f.tablesOK, "app/app_role/"+strings.Join(tableGrantKinds, ""))
+			f.access = map[string]AdminAccess{"app_role": acc}
+			got := planText(t, New(nil, f, nil), diffAccess)
+			mustContain(t, got, selfGrant)
+			if strings.Index(got, selfGrant) > strings.Index(got, "ON ALL TABLES") {
+				t.Errorf("self-grant must precede the namespace statements:\n%s", got)
+			}
+		})
+	}
+}
+
+// No ADMIN OPTION means the admin cannot fix its own membership. That must
+// fail at plan time with the statement an administrator has to run -- not a
+// bare 42501 halfway through an apply.
+func TestOwnerOfFailsPlanningWithTheRunbookGrantWhenTheAdminCannotGrantItself(t *testing.T) {
+	f := convergedInspector()
+	delete(f.tablesOK, "app/app_role/"+strings.Join(tableGrantKinds, ""))
+	f.access = map[string]AdminAccess{"app_role": {Admin: "db_provisioner"}}
+	_, err := New(nil, f, nil).BuildPlan(context.Background(), diffAccess)
+	if err == nil {
+		t.Fatal("BuildPlan succeeded; want a planning error naming the one-time grant")
+	}
+	want := `GRANT "app_role" TO "db_provisioner" WITH ADMIN TRUE, INHERIT TRUE, SET TRUE`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error does not name the fix\n got: %v\nwant substring: %s", err, want)
+	}
+}
+
+// The check is only made when ownerOf has something to do. A converged
+// database plans nothing, so it must not plan -- or fail on -- a membership
+// it does not need. This keeps Observe at zero on roles whose runbook grant
+// left INHERIT false.
+func TestConvergedOwnerOfNeedsNoMembership(t *testing.T) {
+	f := convergedInspector()
+	f.access = map[string]AdminAccess{"app_role": {Admin: "db_provisioner"}} // no SET, INHERIT or ADMIN
+	p, err := New(nil, f, nil).BuildPlan(context.Background(), diffAccess)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if p.Len() != 0 {
+		t.Errorf("plan has %d statement(s), want 0:\n%s", p.Len(), p.Describe())
+	}
+}
+
+// Without ownerOf nothing is done as the role, so no membership is needed
+// even when the admin has none.
+func TestReadOnlyAccessNeedsNoMembership(t *testing.T) {
+	f := fakeInspector{
+		roles:  map[string]bool{"rds_iam": true, "app_role": true},
+		access: map[string]AdminAccess{"app_role": {Admin: "db_provisioner"}},
+	}
+	got := planText(t, New(nil, f, nil), engine.Access{
+		Database:   "appdb",
+		Principal:  "app_role",
+		Namespaces: []engine.Namespace{{Name: "app", Privileges: []string{"SELECT"}}},
+	})
+	mustNotContain(t, got, "TO CURRENT_USER")
 }

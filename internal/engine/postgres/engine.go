@@ -155,13 +155,85 @@ func (e *Engine) BuildPlan(ctx context.Context, a engine.Access) (*plan.Plan, er
 		})
 	}
 
+	// Namespaces are planned into their own plans first, because whether the
+	// admin needs a membership in the principal depends on what they plan:
+	// ownerOf work is done AS the role, everything else is not. A converged
+	// database plans nothing here, so it plans no membership either.
+	var nsSteps []plan.Step
+	ownedWork := false
 	for _, ns := range a.Namespaces {
-		if err := e.addNamespace(ctx, p, a.Principal, ns); err != nil {
+		sub := &plan.Plan{}
+		if err := e.addNamespace(ctx, sub, a.Principal, ns); err != nil {
+			return nil, err
+		}
+		if ns.Owner && sub.Len() > 0 {
+			ownedWork = true
+		}
+		nsSteps = append(nsSteps, sub.Steps()...)
+	}
+	if ownedWork {
+		if err := e.addAdminMembership(ctx, p, a.Principal, exists); err != nil {
 			return nil, err
 		}
 	}
+	p.Add(nsSteps...)
 
 	return p, nil
+}
+
+// addAdminMembership makes sure the connecting admin can act as the principal
+// before any ownerOf statement needs to.
+//
+// PostgreSQL 16 gives a CREATEROLE role that creates another role only an
+// ADMIN OPTION membership in it; SET and INHERIT come only if the server's
+// createrole_self_grant says so, and its default is empty. So the admin that
+// just ran CREATE ROLE cannot run `CREATE SCHEMA ... AUTHORIZATION` for that
+// role ("must be able to SET ROLE"), nor grant on the schema the role then
+// owns ("permission denied for schema"). The first is exactly how the first
+// greenfield ownerOf resource failed against RDS.
+//
+// ADMIN OPTION is enough to grant the missing membership to oneself, so the
+// plan does that, once, before the namespace statements. The grant names
+// INHERIT TRUE explicitly: SET alone was measured insufficient for the schema
+// grant ownerOf plans.
+//
+// A role the admin holds no ADMIN OPTION on (one created by someone else, and
+// never given the one-time grant) cannot be fixed from here. That is a hard
+// failure at plan time, naming the statement an administrator must run,
+// rather than a bare 42501 halfway through applying.
+func (e *Engine) addAdminMembership(ctx context.Context, p *plan.Plan, principal string, exists bool) error {
+	role := QuoteIdent(principal)
+	grant := &Statement{
+		SQL: fmt.Sprintf("GRANT %s TO CURRENT_USER WITH INHERIT TRUE, SET TRUE", role),
+		Why: "ownerOf acts as this role: SET for CREATE SCHEMA ... AUTHORIZATION and OWNER TO, INHERIT for " +
+			"granting on what it owns; a CREATEROLE creator holds only ADMIN OPTION by default",
+		exec: e.exec,
+	}
+
+	// Created by this very plan: the admin is about to be its creator and
+	// will hold ADMIN OPTION, and the role cannot be inspected yet.
+	if !exists {
+		p.Add(grant)
+		return nil
+	}
+
+	acc, err := e.inspect.AdminAccessTo(ctx, principal)
+	if err != nil {
+		return fmt.Errorf("checking the admin's access to role %q: %w", principal, err)
+	}
+	if acc.Set && acc.Inherit {
+		return nil
+	}
+	if !acc.Grant {
+		return fmt.Errorf(
+			"ownerOf needs %q to be able to act as role %q (it has SET=%t, INHERIT=%t) and %q holds no ADMIN "+
+				"OPTION on it to grant itself that membership; an administrator must run once: "+
+				"GRANT %s TO %s WITH ADMIN TRUE, INHERIT TRUE, SET TRUE",
+			acc.Admin, principal, acc.Set, acc.Inherit, acc.Admin, role, QuoteIdent(acc.Admin),
+		)
+	}
+	p.Add(grant)
+	return nil
 }
 
 func (e *Engine) addNamespace(ctx context.Context, p *plan.Plan, principal string, ns engine.Namespace) error {
@@ -216,7 +288,7 @@ func (e *Engine) addNamespace(ctx context.Context, p *plan.Plan, principal strin
 				exec: e.exec,
 			})
 		}
-		if err := e.addDefaultPrivileges(ctx, p, principal, ns.Name, "TABLES", privs.Table, ns.Owner); err != nil {
+		if err := e.addDefaultPrivileges(ctx, p, principal, ns.Name, "TABLES", privs.Table); err != nil {
 			return err
 		}
 	}
@@ -233,7 +305,7 @@ func (e *Engine) addNamespace(ctx context.Context, p *plan.Plan, principal strin
 				exec: e.exec,
 			})
 		}
-		if err := e.addDefaultPrivileges(ctx, p, principal, ns.Name, "SEQUENCES", privs.Sequence, ns.Owner); err != nil {
+		if err := e.addDefaultPrivileges(ctx, p, principal, ns.Name, "SEQUENCES", privs.Sequence); err != nil {
 			return err
 		}
 	}
@@ -262,29 +334,16 @@ func (e *Engine) addDefaultPrivileges(
 	p *plan.Plan,
 	principal, schema, objType string,
 	privs []string,
-	principalWillOwn bool,
 ) error {
 	owners, err := e.inspect.ObjectOwners(ctx, schema)
 	if err != nil {
 		return fmt.Errorf("enumerating owners of schema %q: %w", schema, err)
 	}
 
-	// The principal is added when it is going to own the schema, because the
-	// enumeration above reflects the database as it is BEFORE this plan runs.
-	//
-	// Two cases need it, and both are invisible to a query made first. A
-	// greenfield schema does not exist yet, so ObjectOwners returns nothing at
-	// all and no default is registered for the role about to create every
-	// object in it. And on an existing schema the reassignment further down
-	// this plan makes the principal the owner of relations the enumeration
-	// attributed to someone else.
-	//
-	// Without this the first run registers nothing and only a later reconcile
-	// converges -- correct eventually, but the implementation this replaces
-	// enumerated owners server-side at execution time and got it in one pass.
-	if principalWillOwn {
-		owners = append(owners, principal)
-	}
+	// The principal is NOT added for a schema it is about to own. That used to
+	// register `FOR ROLE principal ... TO principal` in one pass, but a default
+	// an owner grants to itself has no effect (see below), so there is nothing
+	// to register. Other owners in the schema are what defaults are for.
 
 	seen := make(map[string]bool, len(owners))
 	for _, owner := range owners {
@@ -292,6 +351,13 @@ func (e *Engine) addDefaultPrivileges(
 			continue
 		}
 		seen[owner] = true
+		// A default privilege an owner grants to itself does nothing: an owner
+		// holds every privilege on what it creates, and PostgreSQL does not
+		// even record the self-grant on new objects. Planning it only adds a
+		// statement, and an INHERIT dependency, with no effect on access.
+		if owner == principal {
+			continue
+		}
 		if err := ValidateIdent("owner role", owner); err != nil {
 			return fmt.Errorf("schema %q: %w", schema, err)
 		}

@@ -98,10 +98,35 @@ aborts the transaction and takes the whole run with it.
 **`CREATE SCHEMA` is emitted only when the schema is absent.** A bare
 `CREATE SCHEMA IF NOT EXISTS ... AUTHORIZATION` checks the `SET ROLE`
 privilege *before* the existence short-circuit, so re-running it against a role
-the provisioner did not create fails with `must be able to SET ROLE` with
-nothing to do. PostgreSQL 16 grants a `CREATEROLE` creator `SET`/`ADMIN`
-membership on roles it makes, so provisioner-created roles are fine and
-pre-existing ones are not.
+the admin cannot `SET ROLE` to fails with `must be able to SET ROLE` with
+nothing to do.
+
+**`ownerOf` grants the admin its own membership in the role first.** The
+admin acts *as* an `ownerOf` role: `CREATE SCHEMA ... AUTHORIZATION` and
+`ALTER ... OWNER TO` need `SET` on it, and granting on the schema it then owns
+needs `INHERIT` -- with `SET` alone that fails with `permission denied for
+schema`, measured on PostgreSQL 16. It is tempting to
+assume PostgreSQL 16 hands a `CREATEROLE` creator that membership on the roles
+it makes. It does not: the creator gets `ADMIN OPTION` only, and `SET`/
+`INHERIT` come solely from the server's `createrole_self_grant`, which is
+empty by default and on RDS. The first greenfield `ownerOf` resource in a real
+cluster failed exactly there:
+
+```
+applying "CREATE SCHEMA \"dbc_canary\" AUTHORIZATION \"dbc_canary\";":
+ERROR: must be able to SET ROLE "dbc_canary" (SQLSTATE 42501)
+```
+
+`ADMIN OPTION` is enough to grant oneself the rest, so the plan does:
+`GRANT <role> TO CURRENT_USER WITH INHERIT TRUE, SET TRUE`, before any
+namespace statement, and only when an `ownerOf` namespace has work to do -- a
+converged database still plans nothing. It reads the admin's *effective*
+standing (`pg_has_role`), unlike the grant diff, because the question is what
+the admin can do, not which grants are recorded. A role the admin holds no
+`ADMIN OPTION` on (created by someone else) cannot be fixed from inside; the
+plan fails before applying anything and names the one-time grant an
+administrator must run: `GRANT <role> TO <admin> WITH ADMIN TRUE, INHERIT TRUE,
+SET TRUE`.
 
 **`GRANT CONNECT, CREATE ON DATABASE`, not just `CONNECT`.** PostgreSQL checks
 the `CREATE` privilege before it checks existence, so even a no-op
@@ -171,6 +196,21 @@ grant that exists only through a membership someone later removes.
 The reads therefore use `aclexplode` over the stored ACL. A NULL ACL (an object
 on the built-in default) has no explicit entries, so it reads as missing and
 the GRANT is planned. That is also what makes the result match the Job.
+
+**Except on what the grantee owns.** An owner's rights are not a grant anyone
+made or can remove short of changing the owner, and PostgreSQL does not record
+them: a table its owner creates after `ALTER DEFAULT PRIVILEGES FOR ROLE owner
+... TO owner` still has a NULL ACL. Counting such objects made the diff plan
+`GRANT ... ON ALL TABLES` to the owner on every reconcile, forever, and
+`Converged` never went true. That is what stg showed in Observe for
+`trader_tools` and `trading_reports_ro`, each in the schema it owns. So the
+relation read skips relations the grantee owns, and the planner registers no
+default privilege an owner would grant itself. If ownership later moves away,
+the relation is counted again and the GRANT comes back on the next reconcile.
+
+This is the one place the result knowingly differs from the Job, which writes
+owner self-entries on whatever existed when it ran. The difference is in the
+catalog only; access is identical.
 
 ## Modes
 

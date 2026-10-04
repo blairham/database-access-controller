@@ -113,6 +113,32 @@ type Inspector interface {
 	// PRIVILEGES FOR ROLE owner IN SCHEMA schema for objType ("r" for tables,
 	// "S" for sequences) to grantee.
 	DefaultPrivileges(ctx context.Context, owner, schema, objType, grantee string) ([]string, error)
+
+	// AdminAccessTo reports what the CONNECTING role (current_user) can do
+	// with role. Unlike the ACL reads above this one is deliberately
+	// EFFECTIVE (pg_has_role): the question is what the admin can do right
+	// now, through any path, not which grants are recorded.
+	AdminAccessTo(ctx context.Context, role string) (AdminAccess, error)
+}
+
+// AdminAccess is the connecting role's standing with another role.
+//
+// ownerOf needs both halves. SET is what PostgreSQL 16 checks for
+// `CREATE SCHEMA ... AUTHORIZATION role` and `ALTER ... OWNER TO role`.
+// INHERIT (pg_has_role USAGE) is what lets the admin act with the role's own
+// privileges, which granting on a schema the role owns requires. With SET
+// alone that GRANT fails with "permission denied for schema" -- measured on
+// PostgreSQL 16.
+type AdminAccess struct {
+	// Admin is current_user, for error messages.
+	Admin string
+	// Set: the admin may SET ROLE to role.
+	Set bool
+	// Inherit: the admin holds role's privileges.
+	Inherit bool
+	// Grant: the admin holds ADMIN OPTION on role, so it can grant itself
+	// the membership it lacks.
+	Grant bool
 }
 
 // Queries used by the pgx-backed Inspector. They are exported so the CLI can
@@ -190,6 +216,17 @@ SELECT c.relname, c.relkind::text, pg_get_userbyid(c.relowner)
 	// does not exist yet matches no entry, so everything reads as missing,
 	// which is right -- the plan is about to create it.
 
+	// QueryAdminAccessTo returns current_user's effective standing with $1.
+	// A superuser reads true everywhere, which is why a suite connecting as
+	// postgres can never see the failures this guards against.
+	QueryAdminAccessTo = `
+SELECT current_user::text,
+       pg_has_role(current_user, r.oid, 'SET'),
+       pg_has_role(current_user, r.oid, 'USAGE'),
+       pg_has_role(current_user, r.oid, 'MEMBER WITH ADMIN OPTION')
+  FROM pg_roles r
+ WHERE r.rolname = $1`
+
 	QueryRoleIsMemberOf = `
 SELECT EXISTS (
   SELECT 1
@@ -218,6 +255,17 @@ SELECT DISTINCT a.privilege_type
 	// with every wanted privilege and looks for one pair with no explicit
 	// entry. aclexplode of a NULL ACL yields no rows, so a relation still on
 	// the default ACL lacks everything.
+	//
+	// Relations the grantee OWNS are skipped. An owner holds every privilege
+	// implicitly, and PostgreSQL does not record an owner's self-grant on an
+	// object created after its own default privileges: such a table keeps a
+	// NULL relacl. Counting it would plan the GRANT on every reconcile forever
+	// and never report converged -- what stg showed for trader_tools and
+	// trading_reports_ro. If ownership later moves away, the relation is no
+	// longer skipped and the GRANT comes back.
+	//
+	// IS DISTINCT FROM, not <>: a grantee that does not exist yet resolves to
+	// NULL, and `relowner <> NULL` would drop EVERY relation and plan nothing.
 	QueryRelationsLackPrivileges = `
 SELECT EXISTS (
   SELECT 1
@@ -226,6 +274,7 @@ SELECT EXISTS (
    CROSS JOIN unnest($4::text[]) AS want(priv)
    WHERE n.nspname = $1
      AND c.relkind::text = ANY($3::text[])
+     AND c.relowner IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname = $2)
      AND NOT EXISTS (
        SELECT 1
          FROM aclexplode(c.relacl) a
