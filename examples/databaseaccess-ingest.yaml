@@ -22,7 +22,5 @@ spec:
         - INSERT
         - UPDATE
         - DELETE
-      # The service runs its own migrations, so it must own what it creates --
-      # including the views, which a migration replaces with DROP VIEW plus
-      # CREATE VIEW and which therefore require ownership.
+      # The service runs its own migrations, so it owns the schema's objects.
       ownerOf: true

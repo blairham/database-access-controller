@@ -1,8 +1,6 @@
 {{- if .Values.autoscaling.enabled }}
 {{/*
-Autoscaling a leader-elected controller adds standbys, not throughput: exactly
-one replica reconciles however many are running. Present for parity with the
-chart layout this follows; leave it off unless you have a reason.
+Only the leader reconciles, so autoscaling adds standbys, not throughput.
 */}}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

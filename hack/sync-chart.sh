@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
-# Copy the generated CRD and RBAC into the Helm chart.
-#
-# controller-gen owns both: the CRD comes from the kubebuilder markers on the
-# API types, the ClusterRole rules from the markers on the reconciler. Writing
-# either by hand in the chart means the chart drifts from what the controller
-# actually needs, and the failure is a permission error at runtime rather than
-# anything a review would catch.
-#
-# So they are generated into config/ and copied here, wrapped in the templating
-# the chart needs. Both output files carry a do-not-edit banner.
+# Copy the controller-gen CRD and RBAC from config/ into the Helm chart,
+# wrapped in the templating the chart needs.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,8 +20,7 @@ banner='{{/*
   # Strip the leading document separator controller-gen emits; the conditional
   # above has to be the first thing in the rendered document.
   sed '1{/^---$/d;}' "$crd_src" |
-    # Helm renders the whole file as a template, and a CRD description
-    # containing {{ would be evaluated. None do today; this keeps it true.
+    # Escape {{ in CRD descriptions, which Helm would evaluate.
     sed 's/{{/{{"{{"}}/g' |
     # The keep annotation has to go inside metadata.annotations, so it is
     # injected rather than appended.

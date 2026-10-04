@@ -6,9 +6,9 @@
 [![Go version](https://img.shields.io/github/go-mod/go-version/blairham/database-controller)](go.mod)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Kubernetes controllers that provision the **data plane** of managed AWS data
-services: the PostgreSQL role, schemas, grants and object ownership a service
-needs inside an RDS or Aurora database.
+A Kubernetes controller that provisions the **data plane** of a PostgreSQL
+database: the role, schemas, grants and object ownership a service needs inside
+RDS, Aurora or a self-managed PostgreSQL.
 
 ```sh
 make check              # vet, unit tests, envtest, chart lint
@@ -16,21 +16,16 @@ make test-integration   # runs the generated SQL against a real PostgreSQL
 make build              # bin/manager, bin/dbctl
 ```
 
-## What this is, and what it deliberately is not
+## Scope
 
-Creating an RDS instance, an Aurora cluster or a DynamoDB table is an AWS
-control-plane call, and Crossplane's upjet-generated `provider-aws` already
-covers roughly a thousand resource types. **This repo does not do that** —
-hand-writing it would be reimplementing generated code.
-
-What no AWS API can do is open a connection to the database and create a role,
-a schema and its grants. That is spoken in the engine's own protocol, it is
-where the real operational pain lives, and it is all this repo does.
+Creating an RDS instance or Aurora cluster is an AWS control-plane call that
+Crossplane's `provider-aws` or ACK already covers; this repo does not do that.
+It does what no AWS API can: connect to the database and create the role,
+schemas and grants.
 
 | Engine | Covered | Why |
 |---|---|---|
-| RDS PostgreSQL | yes | roles, schemas, grants, ownership |
-| Aurora PostgreSQL | yes | same wire protocol, same DDL — one implementation |
+| RDS / Aurora / self-managed PostgreSQL | yes | one implementation |
 | RDS / Aurora MySQL | not yet | same shape, different DDL |
 | RDS SQL Server | not yet | logins and users instead of roles |
 | DynamoDB | never | no data-plane principals; access is an IAM policy, so `provider-aws-iam` owns it |
@@ -59,9 +54,9 @@ spec:
       ownerOf: true
 ```
 
-The controller connects as the admin role using an IAM auth token from Pod
-Identity, reads the database's current state, builds a plan, applies it, and
-records what it did in `status`.
+The controller connects as the admin role, reads the database's current
+state, builds a plan, applies it, records the result in `status`, and repeats
+hourly to correct drift.
 
 The admin needs `CREATEROLE` and the privileges it hands out. For `ownerOf` it
 must also be able to act *as* the service role (`SET` and `INHERIT`). On a
@@ -74,11 +69,11 @@ administrator; until then planning fails and says so.
 ## Authentication
 
 The admin connection uses an RDS IAM token by default, minted in-process from
-whatever AWS credentials the pod has -- on EKS, a Pod Identity Association on
-the controller's ServiceAccount.
+the pod's AWS credentials (on EKS, Pod Identity or IRSA on the controller's
+ServiceAccount).
 
-IAM auth only exists on RDS and Aurora. For a self-managed PostgreSQL, or the
-one in a local development rig, point the instance at a Secret instead:
+IAM auth exists only on RDS and Aurora. For a self-managed PostgreSQL, use a
+Secret instead:
 
 ```yaml
 spec:
@@ -91,17 +86,19 @@ spec:
         key: password
 ```
 
-The Secret is read from the resource's own namespace, never from a namespace
-named in the reference. `dbctl` takes the password from `PGPASSWORD` instead,
-since there is no cluster to read a Secret from on a workstation.
+The Secret is read from the resource's own namespace. `dbctl` takes the
+password from `PGPASSWORD` instead.
+
+`spec.grantRdsIam` (default `true`) is unrelated: it lets the *service's* role
+log in with IAM, and must be `false` on a self-managed PostgreSQL, which has no
+`rds_iam` role.
 
 ### TLS
 
-`sslMode` defaults to `verify-full`: the server's certificate must chain to a
-trusted CA and name the endpoint. Amazon's RDS CAs are not in any system trust
-store, so the controller and `dbctl` carry the
+`sslMode` defaults to `verify-full`: the certificate must chain to a trusted CA
+and name the endpoint. The
 [RDS CA bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem)
-built in, alongside the system CAs. Nothing needs mounting.
+is built in alongside the system CAs, so nothing needs mounting.
 
 | `sslMode` | Use it for |
 |---|---|
@@ -122,16 +119,13 @@ helm install database-controller charts/database-controller \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::<acct>:role/<role>
 ```
 
-The chart follows the `aws-load-balancer-controller` layout -- same value
-names, same file structure -- with one deliberate difference: the CRD lives in
-`templates/` rather than `crds/`, because Helm never upgrades `crds/`. See
-`charts/database-controller/README.md`.
+The annotation is for IRSA; with Pod Identity, associate the role with the
+ServiceAccount instead. See
+[the chart README](charts/database-controller/README.md) for values.
 
-There is also a `k5s.yaml` lane that brings up PostgreSQL plus the controller
-built from source, for exercising the deployment itself -- the image starting,
-the generated RBAC being sufficient, leader election against a real Lease. It
-uses password auth, because a kind cluster has no IAM, and it therefore says
-nothing about whether the Pod Identity path works. See the header of `k5s.yaml`.
+`k5s.yaml` brings up PostgreSQL plus the controller built from source in a kind
+cluster, to exercise the deployment itself (`make rig-install rig-test`). It
+uses password auth, so it does not cover the IAM path.
 
 ## Metrics and alerts
 
@@ -146,17 +140,13 @@ series per `DatabaseAccess`, labeled by `namespace` and `name` only:
 | `database_controller_access_last_planned_timestamp_seconds` | Unix time the database was last planned against (`status.lastPlannedTime`), in either mode |
 | `database_controller_access_last_applied_timestamp_seconds` | Unix time of the last successful apply; never moves in Observe |
 
-A resource's series are removed when it is deleted, so a resource deleted
-while failing stops alerting. The reason for a failure is deliberately not a
-label: it changes value, and every change would leave the old series behind.
-It is on the resource (`kubectl describe databaseaccess`).
+Series are removed when the resource is deleted. The failure reason is on the
+resource (`kubectl describe databaseaccess`), not a label.
 
 `prometheusRule.enabled=true` installs `DatabaseAccessNotReady` (ready is `0`
-for 15 minutes) and `DatabaseAccessStale` (not planned against the database in
-two hours -- twice the one-hour drift interval). Stale keys on last-planned, not
-last-applied, because an Observe resource never applies. An optional third,
-`DatabaseAccessNotConverged` (pending statements for 2 hours), is off by
-default: in Observe, pending is expected until the cutover.
+for 15 minutes) and `DatabaseAccessStale` (not planned against in two hours).
+`DatabaseAccessNotConverged` (pending for 2 hours) is off by default, since
+Observe resources show pending until their cutover.
 
 ## Seeing what it will do
 
@@ -164,11 +154,9 @@ default: in Observe, pending is expected until the cutover.
 dbctl plan -f examples/databaseaccess-ingest.yaml
 ```
 
-This connects to the real database and prints the exact statements the
-controller would run, without running them. The plan is a **diff** against the
-database as it is: a statement appears only when the role, schema, grant,
-default privilege or ownership it would establish is not already there. An
-empty plan means the database already matches the manifest.
+This connects to the real database and prints the statements the controller
+would run, without running them. The plan is a **diff**: an empty plan means
+the database already matches. `dbctl apply` runs it after a confirmation.
 
 ## Observe mode
 
@@ -190,16 +178,10 @@ kubectl get dba <name> -o jsonpath='{.status.pending}'
 | `Ready` condition | `Observed` in Observe: the database was reachable and planned against |
 | `lastPlannedTime` | moves on every reconcile in both modes; `lastAppliedTime` does not move in Observe |
 
-It exists for cutovers. Turning the controller on in Enforce next to whatever
-provisioned the database before only proves it does no harm: the old grants
-are already there to hide a controller that does nothing. In Observe, zero
-pending statements on a database the old provisioner converged is evidence
-that the two agree, collected before the controller is allowed to write.
-Switching a resource to `Enforce` is then the cutover.
-
-In Enforce, `pendingStatements` comes from a fresh plan built after applying,
-so it reports what is still missing after the apply. Anything that stays
-non-zero there is a statement that keeps failing or keeps being undone.
+It is for cutovers from another provisioner: zero pending statements shows the
+two agree, and switching to `Enforce` is the cutover. In Enforce,
+`pendingStatements` comes from a re-plan after applying, so a non-zero value is
+a statement that keeps failing or being undone.
 
 ## Layout
 
@@ -209,13 +191,15 @@ internal/plan/                   engine-neutral Plan: Describe, Apply, Hash
 internal/engine/                 the Engine interface every database implements
 internal/engine/postgres/        PostgreSQL: statements, inspection, plan building
 internal/rdsauth/                IAM auth tokens for RDS and Aurora
-internal/controller/             the reconcilers
-cmd/manager/                     one binary, --controllers selects which run
-cmd/dbctl/              plan and apply from a terminal
+internal/rdsca/                  embedded RDS CA bundle
+internal/controller/             the DatabaseAccess reconciler
+cmd/manager/                     the controller binary
+cmd/dbctl/                       plan and apply from a terminal
+charts/database-controller/      the Helm chart
 ```
 
-`docs/design/database-access.md` explains why the design is shaped this way and
-which production failures each piece exists to prevent.
+[docs/design/database-access.md](docs/design/database-access.md) explains the
+design decisions.
 
 ## Contributing
 

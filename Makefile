@@ -24,11 +24,7 @@ helm-lint: ## Lint and render the chart, including with the toggles flipped.
 	helm template database-controller charts/database-controller --set metrics.serviceMonitor.enabled=true >/dev/null
 	helm template database-controller charts/database-controller --set prometheusRule.enabled=true >/dev/null
 
-# Exactly the paths `generate` writes. NOT all of charts/ -- most of the chart
-# is hand-maintained, so diffing the directory made any ordinary edit to
-# Chart.yaml or values.yaml report "generated files are stale". A version bump
-# is the obvious case, which means the check failed precisely when preparing a
-# release.
+# Exactly the paths `generate` writes; the rest of the chart is hand-maintained.
 GENERATED_PATHS = config apis/db/v1alpha1/zz_generated.deepcopy.go \
                   charts/database-controller/templates/crds.yaml \
                   charts/database-controller/templates/rbac.yaml
@@ -69,21 +65,13 @@ build:
 	$(GO) build -o $(BIN)/manager ./cmd/manager
 	$(GO) build -o $(BIN)/dbctl ./cmd/dbctl
 
-# A UNIQUE TAG PER BUILD, and it has to be unique for two separate reasons.
-#
-# A mutable tag leaves the Deployment spec byte-identical after a rebuild, so
-# Kubernetes has no diff to act on and helm reports "deployed" over a pod still
-# running the old binary. And `kind load` does not reliably replace an image
-# already present under that tag, so even a forced restart can pull the stale
-# one back. Measured: a pod 57 minutes old after a successful upgrade, and a
-# node still serving sha 3eeb185c while the build had produced 94b7f9b7 --
-# which reads as the change not working rather than never having shipped.
+# A unique tag per build: with a reused tag the Deployment spec does not change
+# (so nothing rolls) and `kind load` may keep the old image.
 RIG_TAG ?= dev-$(shell date +%s)
 RIG_IMG = database-controller:$(RIG_TAG)
 
-# Extra values for the rig release. A rig whose PostgreSQL terminates RDS IAM
-# auth needs a credential-agent sidecar here, which is more than --set can
-# express -- see docs/design/database-access.md.
+# Extra values file for the rig release, e.g. a credential-agent sidecar for
+# testing IAM auth (see docs/design/database-access.md).
 RIG_VALUES ?=
 
 RIG_CONTEXT ?= k5s/database-controller
@@ -131,7 +119,7 @@ test-envtest: ## Run the controller against a real kube-apiserver (no cluster).
 	  $(GO) test -tags envtest ./internal/controller/... -v
 
 .PHONY: test-equivalence
-test-equivalence: pg-up ## Diff this engine against the provisioner it replaces. Needs JOB_SCRIPT, EQ_SCHEMA, EQ_ROLE.
+test-equivalence: pg-up ## Diff this engine against an existing provisioner script. Needs JOB_SCRIPT, EQ_SCHEMA, EQ_ROLE.
 	@test -n "$(JOB_SCRIPT)" || { echo "set JOB_SCRIPT to a rendered provisioner script"; exit 1; }
 	JOB_SCRIPT='$(JOB_SCRIPT)' JOB_SCRIPT_RO='$(JOB_SCRIPT_RO)' \
 	EQ_SCHEMA='$(EQ_SCHEMA)' EQ_ROLE='$(EQ_ROLE)' \

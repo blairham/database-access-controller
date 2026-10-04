@@ -15,10 +15,7 @@ spec:
       rules:
         {{- with .Values.prometheusRule.rules.notReady }}
         {{- if .enabled }}
-        # A service whose database access did not apply. Scraped series carry
-        # the exporting pod's labels, and after a leader failover the old
-        # leader's series lingers until it goes stale; `max by` collapses both
-        # to one alert per resource, keyed only by its identity.
+        # `max by` collapses the old leader's lingering series after a failover.
         - alert: DatabaseAccessNotReady
           expr: max by (namespace, name) (database_controller_access_ready) == 0
           for: {{ .for }}
@@ -34,13 +31,8 @@ spec:
         {{- end }}
         {{- with .Values.prometheusRule.rules.stale }}
         {{- if .enabled }}
-        # Reconciles happen at least hourly (the drift interval), so a last
-        # plan older than the threshold means the resource has stopped being
-        # reconciled -- a wedged leader, or every retry failing. NotReady
-        # covers a resource whose reconcile fails; this covers one that went
-        # quiet. Keyed on last_PLANNED, not last_applied: an Observe resource
-        # never applies, so last_applied would read as stale for every
-        # Observe resource within two hours while it reconciles fine.
+        # The resource has stopped being reconciled. Keyed on last_planned
+        # because Observe resources never apply.
         - alert: DatabaseAccessStale
           expr: time() - max by (namespace, name) (database_controller_access_last_planned_timestamp_seconds) > {{ .thresholdSeconds }}
           for: {{ .for }}
@@ -55,11 +47,8 @@ spec:
         {{- end }}
         {{- with .Values.prometheusRule.rules.notConverged }}
         {{- if .enabled }}
-        # Pending statements that persist. In Observe this is a cutover that is
-        # not ready to switch to Enforce; in Enforce it is a statement that
-        # keeps failing or keeps being undone (the re-plan after each apply
-        # feeds it). Either way the database does not match the spec, but no
-        # access is known to be lost -- Ready covers that -- so it warns.
+        # Pending statements that persist: a statement that keeps failing or
+        # being undone, or an Observe resource not ready for cutover.
         - alert: DatabaseAccessNotConverged
           expr: max by (namespace, name) (database_controller_access_pending_statements) > 0
           for: {{ .for }}
