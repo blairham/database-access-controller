@@ -451,3 +451,305 @@ func TestReapplyRepairsARevokedGrant(t *testing.T) {
 		t.Error("re-applying did not restore the revoked USAGE")
 	}
 }
+
+// connectAsProvisioner returns a connection as a NON-superuser CREATEROLE
+// admin, shaped like the real db_provisioner.
+//
+// Every other test here connects as the postgres superuser, and a superuser
+// holds every membership implicitly -- so it can never see a failure that
+// comes from the admin's membership in a role. The first greenfield ownerOf
+// resource in stg failed exactly that way, against RDS, as db_provisioner.
+func connectAsProvisioner(t *testing.T, su pgxConn) pgxConn {
+	t.Helper()
+	ctx := context.Background()
+	const admin, password = "itest_provisioner", "itest"
+	var exists bool
+	if err := su.c.QueryRow(ctx, QueryRoleExists, admin).Scan(&exists); err != nil {
+		t.Fatalf("looking up the provisioner role: %v", err)
+	}
+	if !exists {
+		if err := su.Exec(ctx, fmt.Sprintf(`CREATE ROLE %s LOGIN CREATEROLE PASSWORD %s`,
+			admin, quoteLiteral(password))); err != nil {
+			t.Fatalf("creating the provisioner role: %v", err)
+		}
+	}
+	// WITH GRANT OPTION stands in for how the real db_provisioner reaches the
+	// database: through membership in the role that owns it. Without it the
+	// provisioner's own GRANT ... ON DATABASE to a service role is accepted
+	// as "no privileges were granted" and nothing is granted.
+	if err := su.Exec(ctx, fmt.Sprintf(`GRANT CONNECT, CREATE ON DATABASE %s TO %s WITH GRANT OPTION`,
+		QuoteIdent(su.c.Config().Database), admin)); err != nil {
+		t.Fatalf("granting the provisioner its database privileges: %v", err)
+	}
+
+	cfg := su.c.Config().Copy()
+	cfg.User, cfg.Password = admin, password
+	c, err := pgx.ConnectConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connecting as %s: %v", admin, err)
+	}
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
+	return pgxConn{c}
+}
+
+// dropProvisionedRole drops a role the provisioner granted database
+// privileges to. DROP OWNED BY, run as the superuser, leaves a database grant
+// whose GRANTOR is the provisioner in place, and that grant alone blocks
+// DROP ROLE ("privileges for database ..."), so the grantor revokes it first.
+func dropProvisionedRole(t *testing.T, su pgxConn, role string) {
+	t.Helper()
+	ctx := context.Background()
+	var exists bool
+	if err := su.c.QueryRow(ctx, QueryRoleExists, role).Scan(&exists); err != nil {
+		t.Fatalf("looking up %s: %v", role, err)
+	}
+	if exists {
+		// Only the grantor may revoke its own grant, so the superuser
+		// briefly becomes it.
+		for _, stmt := range []string{
+			`SET ROLE itest_provisioner`,
+			fmt.Sprintf(`REVOKE ALL ON DATABASE %s FROM %s`, QuoteIdent(su.c.Config().Database), QuoteIdent(role)),
+			`RESET ROLE`,
+		} {
+			if err := su.Exec(ctx, stmt); err != nil {
+				_ = su.Exec(ctx, `RESET ROLE`)
+				t.Fatalf("revoking the provisioner's database grant to %s (%q): %v", role, stmt, err)
+			}
+		}
+	}
+	dropRole(t, su, role)
+}
+
+// A brand-new role with ownerOf, provisioned by a non-superuser admin: the
+// plan creates the role, then must give the admin a membership it can act
+// through before CREATE SCHEMA ... AUTHORIZATION. Without the self-grant this
+// fails with `must be able to SET ROLE`, the stg canary error.
+func TestGreenfieldOwnerOfAsANonSuperuserAdmin(t *testing.T) {
+	ctx := context.Background()
+	su := connect(t)
+	const role, schema = "itest_greenfield_app", "itest_greenfield"
+	if err := su.Exec(ctx, fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, schema)); err != nil {
+		t.Fatal(err)
+	}
+	connectAsProvisioner(t, su) // the grantor dropProvisionedRole revokes by must exist
+	dropProvisionedRole(t, su, role)
+	t.Cleanup(func() {
+		_ = su.Exec(context.Background(), fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, schema))
+		dropProvisionedRole(t, su, role)
+	})
+
+	prov := connectAsProvisioner(t, su)
+	e := New(prov, prov, nil)
+	access := engine.Access{
+		Database:  su.c.Config().Database,
+		Principal: role,
+		Namespaces: []engine.Namespace{{
+			Name:       schema,
+			Privileges: []string{"USAGE", "CREATE", "SELECT", "INSERT", "UPDATE", "DELETE"},
+			Owner:      true,
+		}},
+	}
+
+	p, err := e.BuildPlan(ctx, access)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if _, err := p.Apply(ctx); err != nil {
+		t.Fatalf("applying as a non-superuser admin: %v\n\nplan:\n%s", err, p.Describe())
+	}
+
+	var owner string
+	if err := su.c.QueryRow(ctx,
+		`SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = $1`, schema).Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	if owner != role {
+		t.Errorf("schema %s is owned by %q, want %q", schema, owner, role)
+	}
+
+	again, err := e.BuildPlan(ctx, access)
+	if err != nil {
+		t.Fatalf("second BuildPlan: %v", err)
+	}
+	if again.Len() != 0 {
+		t.Errorf("second plan has %d statement(s), want 0:\n%s", again.Len(), again.Describe())
+	}
+}
+
+// A role the admin did not create and holds no ADMIN OPTION on cannot be fixed
+// by the controller. Planning must fail with the one-time grant an
+// administrator has to run, before anything is applied.
+func TestOwnerOfOnAForeignRoleNamesTheRunbookGrant(t *testing.T) {
+	ctx := context.Background()
+	su := connect(t)
+	const role, schema = "itest_foreign_app", "itest_foreign"
+	if err := su.Exec(ctx, fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, schema)); err != nil {
+		t.Fatal(err)
+	}
+	dropRole(t, su, role)
+	t.Cleanup(func() {
+		_ = su.Exec(context.Background(), fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, schema))
+		dropRole(t, su, role)
+	})
+	for _, s := range []string{
+		fmt.Sprintf(`CREATE ROLE %s LOGIN`, role), // created by the superuser, not the provisioner
+		fmt.Sprintf(`CREATE SCHEMA %s`, schema),
+		fmt.Sprintf(`CREATE TABLE %s.t (id int)`, schema),
+	} {
+		if err := su.Exec(ctx, s); err != nil {
+			t.Fatalf("seeding %q: %v", s, err)
+		}
+	}
+
+	prov := connectAsProvisioner(t, su)
+	_, err := New(prov, prov, nil).BuildPlan(ctx, engine.Access{
+		Database:   su.c.Config().Database,
+		Principal:  role,
+		Namespaces: []engine.Namespace{{Name: schema, Privileges: []string{"SELECT"}, Owner: true}},
+	})
+	if err == nil {
+		t.Fatal("BuildPlan succeeded; want an error naming the one-time grant")
+	}
+	want := fmt.Sprintf(`GRANT %q TO "itest_provisioner" WITH ADMIN TRUE, INHERIT TRUE, SET TRUE`, role)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error does not name the fix\n got: %v\nwant substring: %s", err, want)
+	}
+}
+
+// ownerSelfSetup converges an ownerOf role on its own schema and returns the
+// engine, the access and a helper that runs SQL as a given role.
+func ownerSelfSetup(t *testing.T, role, other, schema string) (*Engine, engine.Access, func(as, sql string)) {
+	t.Helper()
+	ctx := context.Background()
+	su := connect(t)
+	cleanup := func() {
+		_ = su.Exec(context.Background(), fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, schema))
+		dropRole(t, su, role)
+		dropRole(t, su, other)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	for _, s := range []string{
+		fmt.Sprintf(`CREATE ROLE %s LOGIN`, role),
+		fmt.Sprintf(`CREATE ROLE %s LOGIN`, other),
+		fmt.Sprintf(`CREATE SCHEMA %s AUTHORIZATION %s`, schema, role),
+	} {
+		if err := su.Exec(ctx, s); err != nil {
+			t.Fatalf("seeding %q: %v", s, err)
+		}
+	}
+	as := func(r, sql string) {
+		t.Helper()
+		for _, s := range []string{`SET ROLE ` + r, sql, `RESET ROLE`} {
+			if err := su.Exec(ctx, s); err != nil {
+				_ = su.Exec(ctx, `RESET ROLE`)
+				t.Fatalf("as %s, %q: %v", r, s, err)
+			}
+		}
+	}
+	as(role, fmt.Sprintf(`CREATE TABLE %s.before_converge (id bigserial PRIMARY KEY)`, schema))
+
+	e := New(su, su, nil)
+	access := engine.Access{
+		Database:  su.c.Config().Database,
+		Principal: role,
+		Namespaces: []engine.Namespace{{
+			Name: schema, Privileges: []string{"USAGE", "CREATE", "SELECT", "INSERT", "UPDATE", "DELETE"}, Owner: true,
+		}},
+	}
+	for pass := 1; pass <= 2; pass++ {
+		p, err := e.BuildPlan(ctx, access)
+		if err != nil {
+			t.Fatalf("pass %d BuildPlan: %v", pass, err)
+		}
+		if _, err := p.Apply(ctx); err != nil {
+			t.Fatalf("pass %d apply: %v", pass, err)
+		}
+	}
+	return e, access, as
+}
+
+// A table the owner creates after convergence has a NULL ACL -- PostgreSQL
+// never records an owner's rights -- but the owner can use it. The diff must
+// not count it as lacking, or it plans the GRANT on every reconcile and never
+// converges: what stg showed for trader_tools and trading_reports_ro.
+func TestTablesTheOwnerCreatesLaterDoNotReopenThePlan(t *testing.T) {
+	ctx := context.Background()
+	e, access, as := ownerSelfSetup(t, "itest_selfown_app", "itest_selfown_other", "itest_selfown")
+	as("itest_selfown_app", `CREATE TABLE itest_selfown.after_converge (id bigserial PRIMARY KEY)`)
+
+	p, err := e.BuildPlan(ctx, access)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if p.Len() != 0 {
+		t.Errorf("plan reopened after the owner created a table, want 0 statements:\n%s", p.Describe())
+	}
+}
+
+// Skipping what the grantee owns must not hide a real gap: once ownership
+// moves to someone else, the old owner's implicit rights are gone, and the
+// next plan has to grant them back -- then settle again.
+func TestOwnershipMovingAwayBringsTheGrantBack(t *testing.T) {
+	ctx := context.Background()
+	e, access, as := ownerSelfSetup(t, "itest_moved_app", "itest_moved_other", "itest_moved")
+	as("itest_moved_app", `CREATE TABLE itest_moved.moved (id int)`)
+	as("postgres", `ALTER TABLE itest_moved.moved OWNER TO itest_moved_other`) // an administrator moves it
+
+	p, err := e.BuildPlan(ctx, access)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	want := `ON ALL TABLES IN SCHEMA "itest_moved" TO "itest_moved_app"`
+	if !strings.Contains(p.Describe(), want) {
+		t.Fatalf("plan does not re-grant the table that moved away; want %q in:\n%s", want, p.Describe())
+	}
+	if _, err := p.Apply(ctx); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	// ownerOf reassigns the table back AND the grant now exists: settled.
+	again, err := e.BuildPlan(ctx, access)
+	if err != nil {
+		t.Fatalf("second BuildPlan: %v", err)
+	}
+	if again.Len() != 0 {
+		t.Errorf("did not settle after the re-grant, want 0 statements:\n%s", again.Describe())
+	}
+}
+
+// A role that does not exist yet must still be granted on tables that do.
+// The owner exclusion compares relowner with the grantee's oid, which is NULL
+// for a role not created yet; with `<>` instead of IS DISTINCT FROM every
+// relation would drop out and the GRANT would silently never be planned.
+func TestANewRoleIsGrantedOnExistingTables(t *testing.T) {
+	ctx := context.Background()
+	su := connect(t)
+	const role, schema = "itest_newreader", "itest_newreader_src"
+	cleanup := func() {
+		_ = su.Exec(context.Background(), fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, schema))
+		dropRole(t, su, role)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	for _, s := range []string{
+		fmt.Sprintf(`CREATE SCHEMA %s`, schema),
+		fmt.Sprintf(`CREATE TABLE %s.events (id int)`, schema),
+	} {
+		if err := su.Exec(ctx, s); err != nil {
+			t.Fatalf("seeding %q: %v", s, err)
+		}
+	}
+
+	p, err := New(su, su, nil).BuildPlan(ctx, engine.Access{
+		Database:   su.c.Config().Database,
+		Principal:  role,
+		Namespaces: []engine.Namespace{{Name: schema, Privileges: []string{"SELECT"}}},
+	})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	want := fmt.Sprintf(`GRANT SELECT ON ALL TABLES IN SCHEMA %q TO %q;`, schema, role)
+	if !strings.Contains(p.Describe(), want) {
+		t.Errorf("plan for a not-yet-created role is missing %q:\n%s", want, p.Describe())
+	}
+}

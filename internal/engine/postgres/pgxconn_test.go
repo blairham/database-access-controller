@@ -96,3 +96,7 @@ func (p pgxConn) RelationsLackPrivileges(
 func (p pgxConn) DefaultPrivileges(ctx context.Context, owner, schema, objType, grantee string) ([]string, error) {
 	return p.prod().DefaultPrivileges(ctx, owner, schema, objType, grantee)
 }
+
+func (p pgxConn) AdminAccessTo(ctx context.Context, role string) (AdminAccess, error) {
+	return p.prod().AdminAccessTo(ctx, role)
+}

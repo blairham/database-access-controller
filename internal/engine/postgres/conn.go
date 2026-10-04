@@ -212,6 +212,16 @@ func (c *Conn) DefaultPrivileges(ctx context.Context, owner, schema, objType, gr
 		QueryDefaultPrivileges, owner, schema, objType, grantee)
 }
 
+// AdminAccessTo reports current_user's effective standing with role.
+func (c *Conn) AdminAccessTo(ctx context.Context, role string) (AdminAccess, error) {
+	var a AdminAccess
+	err := c.conn.QueryRow(ctx, QueryAdminAccessTo, role).Scan(&a.Admin, &a.Set, &a.Inherit, &a.Grant)
+	if err != nil {
+		return AdminAccess{}, fmt.Errorf("querying the admin's membership in %q: %w", role, err)
+	}
+	return a, nil
+}
+
 // strings runs a one-column text query.
 func (c *Conn) strings(ctx context.Context, what, query string, args ...any) ([]string, error) {
 	rows, err := c.conn.Query(ctx, query, args...)
