@@ -18,17 +18,9 @@ import (
 	"github.com/blairham/database-controller/internal/engine"
 )
 
-// This test proves the engine leaves a database in the same state as the
-// Helm-templated provisioner Job it replaces.
-//
-// Reading the two SQL texts side by side cannot establish that: the Job runs
-// server-side DO blocks that loop over pg_class at execution time, while the
-// engine reads first and emits concrete statements, so the texts are expected
-// to differ. What has to match is the state they produce -- object ownership,
-// relation and schema ACLs, and the default-privilege entries.
-//
-// Both halves run against the same seed, and the resulting state is dumped and
-// compared.
+// This test checks that the engine leaves a database in the same state as an
+// existing provisioner script: object ownership, relation and schema ACLs, and
+// default privileges, from the same seed.
 //
 // Render the script from whatever Helm chart or manifest runs it today, point
 // JOB_SCRIPT at it, and set EQ_SCHEMA / EQ_ROLE to the schema and role it
@@ -41,9 +33,7 @@ import (
 //	PGTEST_CONTAINER=pgtest \
 //	  go test -tags equivalence ./internal/engine/postgres/ -run Equivalence -v
 
-// The schema and role the comparison runs against. They must match whatever
-// the rendered script targets, so they are configurable; the defaults are
-// generic.
+// The schema and role the comparison runs against; they must match the script.
 var (
 	eqSchema = envOr("EQ_SCHEMA", "app")
 	eqRole   = envOr("EQ_ROLE", "app_role")
@@ -90,11 +80,8 @@ func firstLine(s string) string {
 	return s
 }
 
-// eqSeed builds the state that makes the two implementations distinguishable
-// if they differ: a schema owned by someone other than the target role, tables
-// and a sequence owned by a legacy role, and a view plus a materialized view,
-// which are the relkinds an implementation driving off pg_tables/pg_sequences
-// silently skips.
+// eqSeed builds a schema owned by someone other than the target role, tables
+// and a sequence owned by a legacy role, and a view plus a materialized view.
 func eqSeed(t *testing.T, c *pgx.Conn) {
 	t.Helper()
 	for _, s := range []string{
@@ -221,15 +208,9 @@ func eqDump(t *testing.T, c *pgx.Conn) string {
 	return b.String()
 }
 
-// runJobScript executes the real rendered Job script inside the PostgreSQL
-// container.
-//
-// Two lines are removed, and only two: the `apk add aws-cli` install and the
-// `aws rds generate-db-auth-token` export, neither of which can run outside
-// AWS. The GRANT rds_iam statement is also dropped because the rds_iam role
-// exists only on RDS -- and the engine is configured with IAMAuth false for
-// the same reason, so the comparison stays symmetric. Every other statement
-// runs exactly as rendered.
+// runJobScript executes the rendered script inside the PostgreSQL container,
+// minus the AWS CLI install, the auth-token export and GRANT rds_iam, none of
+// which can run outside RDS.
 func runJobScript(t *testing.T, path string) {
 	t.Helper()
 	container := os.Getenv("PGTEST_CONTAINER")
@@ -318,35 +299,19 @@ func TestEquivalenceWithTheProvisionerJob(t *testing.T) {
 			ctx := context.Background()
 			c := eqConn(t)
 
-			// Half one: the Job, run to convergence.
-			//
-			// CONVERGED state is the comparison, not the state after one run,
-			// and the difference is real rather than a convenience. The Job
-			// enumerates object owners BEFORE its ownership-reassignment
-			// blocks, so its first pass registers default privileges for the
-			// OLD owners only; the role that is about to own everything picks
-			// its entry up on the next run. This engine adds that role during
-			// the first pass, because it knows the reassignment further down
-			// the same plan will make it the owner.
-			//
-			// So the two disagree after one run and agree once settled. For a
-			// controller that re-reconciles on an interval, settled state is
-			// the property that matters -- and reaching it in one pass rather
-			// than two is the improvement, not a divergence to paper over.
+			// Half one: the script, run to convergence. Settled state is what
+			// is compared, since a script may need more than one pass.
 			eqSeed(t, c)
 			runJobScript(t, script)
 			runJobScript(t, script)
 			jobState := eqDump(t, c)
 
-			// Half two: the engine, from the same seed and the same
-			// declaration. IAMAuth stays false because rds_iam exists only on
-			// RDS and is stripped from the Job side too, keeping the
-			// comparison symmetric.
+			// Half two: the engine. IAMAuth is false to match the stripped
+			// rds_iam grant.
 			eqSeed(t, c)
 			conn := pgxConn{c}
 			e := New(conn, conn, nil)
-			// Twice on this side too, so both are compared at rest and the
-			// engine's plan is shown to be re-runnable at the same time.
+			// Twice, so both sides are compared at rest.
 			var applied, warnings int
 			for pass := 1; pass <= 2; pass++ {
 				p, err := e.BuildPlan(ctx, tc.access)

@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package v1alpha1 contains the DatabaseAccess API, which declares the
-// PostgreSQL role, schemas and grants a service needs on a shared RDS
-// instance.
+// PostgreSQL role, schemas and grants a service needs.
 //
 // +kubebuilder:object:generate=true
 // +groupName=database-controller.io

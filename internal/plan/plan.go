@@ -2,13 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package plan models provisioning as an ordered list of steps that can be
-// printed before they are run.
-//
-// Both controllers in this repo replace a Kubernetes Job that ran a script: the
-// RDS one ran psql, the Kafka one ran a topic tool. Neither could be inspected
-// without running it, and neither reported which half of the script succeeded.
-// A Plan fixes both: Describe() gives a dry run, and Apply() reports per-step
-// outcomes instead of a single exit code.
+// printed before they are run: Describe gives a dry run, and Apply reports
+// per-step outcomes.
 package plan
 
 import (
@@ -21,8 +16,7 @@ import (
 
 // Step is one unit of provisioning work.
 type Step interface {
-	// Describe returns the human-readable form of the step: the SQL text, the
-	// admin API call, whatever the step will actually do.
+	// Describe returns what the step will run, such as its SQL text.
 	Describe() string
 
 	// Apply performs the step.
@@ -40,8 +34,8 @@ type Step interface {
 	Tolerates(err error) bool
 }
 
-// Plan is an ordered, re-runnable set of steps. Order is load-bearing: a role
-// must exist before it is granted to, a topic before its config is altered.
+// Plan is an ordered, re-runnable set of steps. Order matters: a role must
+// exist before it is granted to.
 type Plan struct {
 	steps []Step
 }
@@ -85,15 +79,7 @@ func (p *Plan) Describe() string {
 	return b.String()
 }
 
-// Hash fingerprints the plan's steps. A changed hash means the desired state
-// changed and the plan is worth re-applying.
-//
-// This replaces hashing a script into a Job name. That workaround exists
-// because a Job is immutable on .spec.template and a GitOps engine's
-// server-side diff swallows the immutable-field rejection, so a changed script
-// can go stale indefinitely while the resource reports as synced. A controller
-// has no such constraint: the hash is an observation recorded in status, not
-// the mechanism that forces the work to happen.
+// Hash fingerprints the plan's steps, for status.appliedPlanHash.
 func (p *Plan) Hash() string {
 	h := sha256.New()
 	for _, s := range p.steps {
@@ -114,14 +100,8 @@ type Result struct {
 	Tolerated int
 }
 
-// Apply runs every step in order.
-//
-// A fatal error stops the plan and is returned with the step's description, so
-// the caller knows exactly where provisioning stopped. Best-effort failures
-// accumulate in Result.Warnings and never stop the plan: ALTER DEFAULT
-// PRIVILEGES FOR ROLE x requires the admin role to hold x's privileges, and it
-// does not hold all of them. Aborting there would take provisioning down for
-// every service the moment one unreachable owner appeared.
+// Apply runs every step in order. A fatal error stops the plan and names the
+// step; best-effort failures accumulate in Result.Warnings.
 func (p *Plan) Apply(ctx context.Context) (Result, error) {
 	var res Result
 	for _, s := range p.steps {

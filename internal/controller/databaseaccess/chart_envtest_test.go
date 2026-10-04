@@ -23,14 +23,8 @@ import (
 	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
 )
 
-// The CRD the chart ships is not the CRD controller-gen wrote: it is passed
-// through Helm templating, which injects an annotation and escapes anything
-// that looks like a Helm action. This installs the CHART's rendering into a
-// fresh API server and checks the schema still does its job.
-//
-// Rendering and installing are the only way to catch this. A chart that emits
-// a subtly broken CRD lints clean, renders clean, and fails at apply time on
-// someone else's cluster.
+// The chart's CRD passes through Helm templating, so this installs the chart's
+// rendering into a fresh API server and checks the schema still works.
 func TestChartRenderedCRDInstallsAndValidates(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm is not on PATH")

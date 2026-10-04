@@ -128,8 +128,7 @@ func get(t *testing.T, name string) *dbv1alpha1.DatabaseAccess {
 	return &out
 }
 
-// The CRD default must actually be applied by the API server, not merely
-// declared in the Go types.
+// The CRD default must be applied by the API server.
 func TestCRDDefaultsEngineToPostgres(t *testing.T) {
 	da := newAccess(t, "defaults", nil)
 	got := get(t, da.Name)
@@ -155,8 +154,7 @@ func TestCRDDefaultsEngineToPostgres(t *testing.T) {
 	}
 }
 
-// The enum has to be enforced by the API server. A value the controller cannot
-// serve should never reach it.
+// The engine enum must be enforced by the API server.
 func TestCRDRejectsUnsupportedEngine(t *testing.T) {
 	da := &dbv1alpha1.DatabaseAccess{
 		ObjectMeta: metav1.ObjectMeta{Name: "bad-engine", Namespace: "default"},
@@ -173,8 +171,8 @@ func TestCRDRejectsUnsupportedEngine(t *testing.T) {
 	}
 }
 
-// Role and schema names reach SQL as identifiers, so the pattern that guards
-// them must be enforced at admission and not only in Go.
+// Role and schema names reach SQL, so their pattern must be enforced at
+// admission too.
 func TestCRDRejectsAnInjectedIdentifier(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -254,8 +252,7 @@ func TestReconcileAppliesAndReportsReady(t *testing.T) {
 	}
 }
 
-// A failure has to land on the resource. A controller that retries silently is
-// no better than the Job's pod log.
+// A failure has to land on the resource's status.
 func TestReconcileReportsFailureOnTheResource(t *testing.T) {
 	f := &fakeEngine{planErr: fmt.Errorf("connection refused")}
 	startManager(t, f.factory())
@@ -286,9 +283,7 @@ func TestReconcileReportsFailureOnTheResource(t *testing.T) {
 	}
 }
 
-// The finalizer is only worth carrying when deletion has work to do. Holding
-// one otherwise turns a stuck controller into a namespace that cannot be
-// deleted.
+// The finalizer is only added when deletion has work to do.
 func TestFinalizerOnlyWhenRevokeOnDelete(t *testing.T) {
 	f := &fakeEngine{}
 	startManager(t, f.factory())
@@ -343,10 +338,7 @@ func TestDeleteRevokesThenReleasesTheFinalizer(t *testing.T) {
 	}
 }
 
-// Password auth resolves the Secret from the resource's own namespace. The
-// namespace is deliberately not taken from the reference: a controller that
-// read Secrets from any namespace on the say-so of a resource in another would
-// be a privilege-escalation path.
+// Password auth resolves the Secret from the resource's own namespace only.
 func TestPasswordAuthReadsTheSecret(t *testing.T) {
 	ctx := context.Background()
 
@@ -430,8 +422,7 @@ func TestPasswordAuthErrorsAreActionable(t *testing.T) {
 	}
 }
 
-// The default stays IAM, so adding the field changes nothing for existing
-// resources.
+// Auth defaults to IAM.
 func TestAuthDefaultsToIAM(t *testing.T) {
 	da := newAccess(t, "auth-default", func(da *dbv1alpha1.DatabaseAccess) {
 		da.Spec.Instance.Auth = &dbv1alpha1.InstanceAuth{}

@@ -9,10 +9,8 @@ import (
 	"strings"
 )
 
-// identPattern is the identifier shape this package accepts. It is deliberately
-// narrower than PostgreSQL's own rules: role, schema and relation names here
-// come from a Kubernetes resource, and there is no reason to accept an
-// identifier that needs explaining.
+// identPattern is the identifier shape this package accepts, deliberately
+// narrower than PostgreSQL's own rules.
 var identPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
 // ValidateIdent rejects an identifier that is not a plain lowercase name.
@@ -21,8 +19,7 @@ func ValidateIdent(kind, name string) error {
 		return fmt.Errorf("%s name is empty", kind)
 	}
 	if len(name) > 63 {
-		// PostgreSQL silently truncates at NAMEDATALEN-1, which turns a typo
-		// into a different role rather than an error.
+		// PostgreSQL silently truncates at NAMEDATALEN-1.
 		return fmt.Errorf("%s name %q exceeds 63 bytes and would be silently truncated by PostgreSQL", kind, name)
 	}
 	if !identPattern.MatchString(name) {
@@ -31,11 +28,8 @@ func ValidateIdent(kind, name string) error {
 	return nil
 }
 
-// QuoteIdent renders name as a quoted SQL identifier.
-//
-// Identifiers cannot be passed as query parameters, so every identifier that
-// reaches a statement goes through here. Embedded double quotes are doubled,
-// which is what PostgreSQL's own quote_ident does.
+// QuoteIdent renders name as a quoted SQL identifier, doubling embedded quotes.
+// Identifiers cannot be bind parameters, so every one goes through here.
 func QuoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }

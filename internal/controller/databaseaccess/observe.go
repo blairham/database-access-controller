@@ -21,9 +21,7 @@ const (
 	// spec: True when the last plan was empty.
 	ConditionConverged = "Converged"
 
-	// maxPending caps status.pending. A first reconcile against an
-	// unprovisioned database can plan hundreds of statements, and a status
-	// object is not where they belong; the count is always exact.
+	// maxPending caps status.pending; status.pendingStatements stays exact.
 	maxPending = 50
 )
 
@@ -32,11 +30,8 @@ func observing(da *dbv1alpha1.DatabaseAccess) bool {
 	return da.Spec.Mode == dbv1alpha1.ModeObserve
 }
 
-// pendingOf flattens a plan into the statements it would run.
-//
-// Observe mode receives ONLY this list, never the plan. That is the structural
-// guarantee that Observe writes nothing: the code path has no step to call
-// Apply on, so no later edit to it can execute one by accident.
+// pendingOf flattens a plan into the statements it would run. Observe receives
+// only this list, never the plan, so it has nothing it could Apply.
 func pendingOf(p *plan.Plan) []string {
 	out := make([]string, 0, p.Len())
 	for _, s := range p.Steps() {
@@ -75,13 +70,9 @@ func setPending(da *dbv1alpha1.DatabaseAccess, pending []string) {
 	setCondition(da, cond)
 }
 
-// observe records what the plan would change and changes nothing.
-//
-// Ready is True when the database could be read and planned against: that is
-// the whole job in this mode, and a Ready=False here keeps its existing
-// meaning (the controller cannot reach or plan against the database), which is
-// exactly what a cutover needs to know before switching to Enforce. Whether
-// the database needs anything is Converged, not Ready.
+// observe records what the plan would change and changes nothing. Ready means
+// the database could be planned against; whether it needs anything is
+// Converged.
 func (r *Reconciler) observe(
 	ctx context.Context,
 	da *dbv1alpha1.DatabaseAccess,
@@ -89,9 +80,7 @@ func (r *Reconciler) observe(
 ) (ctrl.Result, error) {
 	setPending(da, pending)
 	da.Status.ObservedGeneration = da.Generation
-	// Nothing was applied by this reconcile, so the fields describing an apply
-	// are cleared rather than left showing a previous Enforce pass as current.
-	// LastAppliedTime and AppliedPlanHash are history and stay.
+	// Clear per-apply fields; LastAppliedTime and AppliedPlanHash are history.
 	da.Status.StatementsApplied = 0
 	da.Status.Warnings = nil
 	recordObserved(da.Namespace, da.Name)
@@ -113,19 +102,10 @@ func (r *Reconciler) observe(
 	return ctrl.Result{RequeueAfter: driftInterval}, nil
 }
 
-// recordPending re-plans after an Enforce apply and records what is STILL
-// pending.
-//
-// A fresh plan rather than the one just applied, because the applied plan
-// cannot say what did not stick: a best-effort default privilege that was
-// refused, or a GRANT PostgreSQL accepted with "no privileges were granted"
-// because the provisioner lacks rights on that object, both leave the
-// database short while the apply reports success. The re-plan reads the
-// catalog again and reports the truth, at the cost of one more round of
-// reads and no writes.
-//
-// A failed re-plan does not fail the reconcile -- the apply succeeded -- but
-// it does not claim convergence either.
+// recordPending re-plans after an Enforce apply and records what is still
+// pending: a refused best-effort statement, or a GRANT accepted with "no
+// privileges were granted", leaves the database short of a successful apply.
+// A failed re-plan sets Converged=Unknown without failing the reconcile.
 func recordPending(ctx context.Context, da *dbv1alpha1.DatabaseAccess, eng engine.Engine, access engine.Access) {
 	p, err := eng.BuildPlan(ctx, access)
 	if err != nil {

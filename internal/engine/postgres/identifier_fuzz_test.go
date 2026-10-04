@@ -20,8 +20,7 @@ var identifierSeeds = []string{
 }
 
 // FuzzValidateIdent pins that an accepted identifier is always a plain
-// lowercase name of at most 63 bytes. Anything else reaching QuoteIdent would
-// still be quoted safely, but this is the first of two independent lines.
+// lowercase name of at most 63 bytes.
 func FuzzValidateIdent(f *testing.F) {
 	for _, s := range identifierSeeds {
 		f.Add(s)
@@ -48,10 +47,8 @@ func FuzzValidateIdent(f *testing.F) {
 	})
 }
 
-// FuzzQuoteIdent pins the property that keeps a CRD field out of the SQL:
-// whatever the input, the output is exactly ONE quoted identifier, and reading
-// it back the way PostgreSQL does yields the input unchanged. An input that
-// could close the quote early would leave text after the identifier.
+// FuzzQuoteIdent pins that, whatever the input, the output is exactly one
+// quoted identifier that reads back as the input.
 func FuzzQuoteIdent(f *testing.F) {
 	for _, s := range identifierSeeds {
 		f.Add(s)
@@ -71,11 +68,9 @@ func FuzzQuoteIdent(f *testing.F) {
 	})
 }
 
-// readQuotedIdent reads one PostgreSQL double-quoted identifier from the
-// start of s, the way the server's lexer does: a doubled quote is a literal
-// quote, and the first lone quote ends the identifier. It returns the
-// identifier, whatever follows it, and whether s began with a complete one.
-// Written independently of QuoteIdent so that a shared mistake cannot hide.
+// readQuotedIdent reads one PostgreSQL double-quoted identifier from the start
+// of s, returning it, the remainder, and whether s began with a complete one.
+// Written independently of QuoteIdent.
 func readQuotedIdent(s string) (ident, rest string, ok bool) {
 	if s == "" || s[0] != '"' {
 		return "", "", false

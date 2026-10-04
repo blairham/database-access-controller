@@ -84,8 +84,7 @@ func (c *countingEngine) factory() EngineFactory {
 
 func observeMode(da *dbv1alpha1.DatabaseAccess) { da.Spec.Mode = dbv1alpha1.ModeObserve }
 
-// The CRD must default mode to Enforce, so an existing manifest that predates
-// the field keeps doing what it did.
+// The CRD defaults mode to Enforce.
 func TestCRDDefaultsModeToEnforce(t *testing.T) {
 	da := newAccess(t, uniqueName("mode-default"), nil)
 	if got := get(t, da.Name).Spec.Mode; got != dbv1alpha1.ModeEnforce {
@@ -192,10 +191,8 @@ func TestObserveNeverRevokes(t *testing.T) {
 	}
 }
 
-// Enforce applies, then re-plans: pending reports what is STILL missing, not
-// the size of the plan it just ran. countingEngine never converges, so after
-// an apply the re-plan still has every statement pending -- the shape of a
-// grant that keeps failing.
+// Enforce applies, then re-plans: pending reports what is still missing.
+// countingEngine never converges, so every statement stays pending.
 func TestEnforceRecordsPendingFromAFreshPlan(t *testing.T) {
 	c := &countingEngine{pending: 2}
 	startManager(t, c.factory())

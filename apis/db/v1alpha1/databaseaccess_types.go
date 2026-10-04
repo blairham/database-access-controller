@@ -9,42 +9,30 @@ import (
 
 // SchemaGrant declares the privileges a role holds on one schema.
 type SchemaGrant struct {
-	// Schema is the PostgreSQL schema the privileges apply to. It is created if
-	// it does not exist and OwnerOf is true.
+	// Schema is the PostgreSQL schema the privileges apply to. With OwnerOf set
+	// it is created if missing.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^[a-z_][a-z0-9_]*$`
 	Schema string `json:"schema"`
 
-	// Privileges granted on the schema and on the relations within it.
-	//
-	// USAGE and CREATE apply to the schema itself. The remainder are granted ON
-	// ALL TABLES, and the subset PostgreSQL accepts for sequences (SELECT,
-	// UPDATE, USAGE) is granted ON ALL SEQUENCES. Passing INSERT here and
-	// letting it reach the sequence grant is an error -- "invalid privilege type
-	// INSERT for sequence" -- so the split is done for you.
+	// Privileges granted on the schema and the relations in it. USAGE and
+	// CREATE apply to the schema (USAGE is always granted); the rest are granted
+	// ON ALL TABLES, and the subset a sequence accepts (SELECT, UPDATE, USAGE)
+	// ON ALL SEQUENCES.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Enum=SELECT;INSERT;UPDATE;DELETE;TRUNCATE;REFERENCES;TRIGGER;USAGE;CREATE
 	Privileges []string `json:"privileges"`
 
-	// OwnerOf makes the role the owner of the schema and of every relation in
-	// it: tables, sequences, views and materialized views are reassigned.
-	//
-	// Views matter and are easy to miss. Replacing a view requires ownership of
-	// it, so a migration doing DROP VIEW / CREATE OR REPLACE VIEW fails with
-	// "must be owner of view" even when every table it reads was reassigned
-	// correctly.
+	// OwnerOf makes the role the owner of the schema and of every table,
+	// sequence, view and materialized view in it, so its migrations can alter
+	// and replace them.
 	// +optional
 	OwnerOf bool `json:"ownerOf,omitempty"`
 }
 
-// InstanceRef identifies the PostgreSQL instance to act on.
-//
-// The instance may be RDS or Aurora, or a PostgreSQL running anywhere else --
-// in this cluster, on a VM, in a development rig. The work the controller does
-// once connected is identical in every case, because it is spoken in the
-// engine's own protocol; the only thing that varies is how the admin
-// connection authenticates. Region is therefore the one AWS-shaped field here,
-// and it is required only on the IAM path that uses it.
+// InstanceRef identifies the PostgreSQL instance to act on: RDS, Aurora, or a
+// self-managed PostgreSQL. Only the admin connection's authentication differs
+// between them.
 //
 // +kubebuilder:validation:XValidation:rule="(has(self.auth) && has(self.auth.method) && self.auth.method == 'password') || (has(self.region) && size(self.region) > 0)",message="instance.region is required unless instance.auth.method is password"
 type InstanceRef struct {
@@ -62,10 +50,8 @@ type InstanceRef struct {
 	// +optional
 	Database string `json:"database,omitempty"`
 
-	// Region is the AWS region, used to sign the IAM auth token. It is
-	// required when the admin connection authenticates with IAM -- which is
-	// the default -- and ignored entirely under password auth, where there is
-	// no token to sign and the instance need not be in AWS at all.
+	// Region is the AWS region the IAM auth token is signed for. Required for
+	// IAM auth (the default); ignored under password auth.
 	// +kubebuilder:validation:MinLength=1
 	// +optional
 	Region string `json:"region,omitempty"`
@@ -76,23 +62,18 @@ type InstanceRef struct {
 	// +optional
 	AdminUser string `json:"adminUser,omitempty"`
 
-	// SSLMode is the libpq sslmode for the admin connection. The default,
-	// verify-full, checks the server's certificate against the system CAs
-	// plus Amazon's RDS CAs (built in) and checks that it names the endpoint.
-	// Use verify-ca when the endpoint is a CNAME the certificate does not
-	// name. require encrypts without verifying -- the admin credential then
-	// goes to whoever answers on the address -- and disable is for a local
-	// PostgreSQL without TLS.
+	// SSLMode is the libpq sslmode for the admin connection. verify-full (the
+	// default) checks the certificate against the system CAs plus the built-in
+	// RDS CAs and checks that it names the endpoint; verify-ca skips the name
+	// check, for an endpoint CNAME. require encrypts without verifying, and
+	// disable is for a local PostgreSQL without TLS.
 	// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
 	// +kubebuilder:default=verify-full
 	// +optional
 	SSLMode string `json:"sslMode,omitempty"`
 
-	// Auth is how THE CONTROLLER authenticates as AdminUser.
-	//
-	// ⚠ Not to be confused with `spec.grantRdsIam`, which grants the rds_iam
-	// role to the service's own role. This field governs one connection: the
-	// controller's.
+	// Auth is how the controller authenticates as AdminUser. Unrelated to
+	// spec.grantRdsIam, which concerns the service's role.
 	// +optional
 	Auth *InstanceAuth `json:"auth,omitempty"`
 }
@@ -106,13 +87,8 @@ const (
 	// credentials. This is the production path and the default.
 	AuthIAM AuthMethod = "iam"
 
-	// AuthPassword reads a password from a Secret.
-	//
-	// It exists because IAM authentication is only available on RDS and
-	// Aurora. Without it the controller cannot reach a PostgreSQL that is not
-	// an AWS managed instance -- a self-managed server, or the one in a local
-	// development rig -- which also makes dbctl unusable anywhere but against
-	// real RDS.
+	// AuthPassword reads a password from a Secret, for a PostgreSQL without
+	// IAM authentication.
 	AuthPassword AuthMethod = "password"
 )
 
@@ -125,11 +101,8 @@ type InstanceAuth struct {
 	// +optional
 	Method AuthMethod `json:"method,omitempty"`
 
-	// PasswordSecretRef points at the Secret holding the admin password. It is
-	// required when Method is password and ignored otherwise. The Secret must
-	// live in the same namespace as this resource -- a controller that could
-	// read Secrets from any namespace on the say-so of a resource in one would
-	// be a privilege-escalation path.
+	// PasswordSecretRef points at the Secret holding the admin password, in
+	// this resource's namespace. Required when Method is password.
 	// +optional
 	PasswordSecretRef *SecretKeySelector `json:"passwordSecretRef,omitempty"`
 }
@@ -146,19 +119,13 @@ type SecretKeySelector struct {
 	Key string `json:"key,omitempty"`
 }
 
-// Engine names the database engine a DatabaseAccess targets.
-//
-// The enum lists only what is implemented. Widening it later is additive and
-// non-breaking; accepting a value the controller cannot serve would turn a
-// typo into a reconcile-time failure instead of an immediate rejection by the
-// API server.
+// Engine names the database engine a DatabaseAccess targets. The enum lists
+// only what is implemented.
 // +kubebuilder:validation:Enum=postgres
 type Engine string
 
 const (
-	// EnginePostgres covers RDS PostgreSQL and Aurora PostgreSQL. They speak
-	// the same wire protocol and take the same DDL, so one implementation
-	// serves both.
+	// EnginePostgres covers RDS, Aurora and self-managed PostgreSQL.
 	EnginePostgres Engine = "postgres"
 )
 
@@ -168,36 +135,23 @@ const (
 type Mode string
 
 const (
-	// ModeEnforce applies the plan: the database is brought to the declared
-	// state on every reconcile.
+	// ModeEnforce applies the plan on every reconcile.
 	ModeEnforce Mode = "Enforce"
 
 	// ModeObserve builds the same plan and records it in status without
-	// executing a single statement.
-	//
-	// It exists for cutovers. Turning a DatabaseAccess on next to whatever
-	// provisioned the database before -- a Job, a runbook, a human -- in
-	// Enforce proves only that the controller did no harm, because the old
-	// provisioner's grants are already there to hide a controller that does
-	// nothing. Observe answers the question that matters first: against the
-	// real database, what exactly would this controller change? An empty
-	// plan on a database the old provisioner converged is the evidence that
-	// the two agree, gathered before the controller is allowed to write.
+	// executing it, so a cutover from another provisioner can confirm the plan
+	// is empty before the controller is allowed to write.
 	ModeObserve Mode = "Observe"
 )
 
 // DatabaseAccessSpec declares the desired database state for one service.
 type DatabaseAccessSpec struct {
 	// Engine is the database engine to provision against.
-	//
-	// The field is explicit even while only one value is valid, so adding an
-	// engine is an enum widening rather than a breaking change to a spec that
-	// had assumed PostgreSQL all along.
 	// +kubebuilder:default=postgres
 	// +optional
 	Engine Engine `json:"engine,omitempty"`
 
-	// Instance is the RDS instance to provision on.
+	// Instance is the PostgreSQL instance to provision on.
 	Instance InstanceRef `json:"instance"`
 
 	// Role is the per-service PostgreSQL role to create and grant to.
@@ -205,16 +159,10 @@ type DatabaseAccessSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z_][a-z0-9_]*$`
 	Role string `json:"role"`
 
-	// GrantRdsIam grants the rds_iam role to Role, so the SERVICE can
-	// authenticate to the database with an IAM token instead of a password.
-	//
-	// ⚠ THIS IS NOT HOW THE CONTROLLER AUTHENTICATES. That is
-	// `instance.auth.method`, and the two are independent: the controller can
-	// connect with a password to a real RDS instance and still grant rds_iam,
-	// or connect with an IAM token and grant nothing.
-	//
-	// The rds_iam role exists only on RDS and Aurora. Set this false against a
-	// self-managed PostgreSQL, or the grant fails.
+	// GrantRdsIam grants rds_iam to Role so the service can authenticate with
+	// an IAM token. Independent of instance.auth.method, which is how the
+	// controller authenticates. rds_iam exists only on RDS and Aurora; set this
+	// false for a self-managed PostgreSQL.
 	// +kubebuilder:default=true
 	// +optional
 	GrantRdsIam bool `json:"grantRdsIam,omitempty"`
@@ -223,22 +171,15 @@ type DatabaseAccessSpec struct {
 	// +optional
 	Grants []SchemaGrant `json:"grants,omitempty"`
 
-	// RevokeOnDelete drops the grants when this resource is deleted.
-	//
-	// Defaults to false, and that default is deliberate: role-owned objects
-	// break on DROP, so tearing down access is a decision a human makes with
-	// the data in front of them.
+	// RevokeOnDelete revokes the grants when this resource is deleted. The role
+	// itself is never dropped.
 	// +kubebuilder:default=false
 	// +optional
 	RevokeOnDelete bool `json:"revokeOnDelete,omitempty"`
 
-	// Mode is Enforce (apply the plan) or Observe (plan only: report in
-	// status what would change, and change nothing).
-	//
-	// Observe never executes a statement, never adds the revoke finalizer and
-	// never revokes on delete, even with revokeOnDelete set. Switching a
-	// resource from Observe to Enforce is the cutover; switching back stops
-	// all writes on the next reconcile.
+	// Mode is Enforce (apply the plan) or Observe (report in status what would
+	// change, and change nothing). Observe also never revokes on delete, even
+	// with revokeOnDelete set.
 	// +kubebuilder:default=Enforce
 	// +optional
 	Mode Mode `json:"mode,omitempty"`
@@ -246,9 +187,9 @@ type DatabaseAccessSpec struct {
 
 // DatabaseAccessStatus reports what the controller actually applied.
 type DatabaseAccessStatus struct {
-	// Conditions follow the standard Kubernetes condition contract. Ready is
-	// true when the last reconcile applied every statement without a fatal
-	// error.
+	// Conditions are Ready (the last reconcile planned, and in Enforce applied,
+	// without a fatal error) and Converged (the database already matches the
+	// spec).
 	// +optional
 	// +listType=map
 	// +listMapKey=type
@@ -271,30 +212,23 @@ type DatabaseAccessStatus struct {
 	// +optional
 	StatementsApplied int `json:"statementsApplied,omitempty"`
 
-	// Warnings holds the best-effort statements that failed. These are not
-	// fatal, but they are the difference between "access was granted" and
-	// "access was granted and will survive the next migration", so they are
-	// surfaced rather than buried in a pod log.
+	// Warnings holds the best-effort statements that failed on the last apply,
+	// typically default privileges that keep future objects reachable.
 	// +optional
 	Warnings []string `json:"warnings,omitempty"`
 
 	// PendingStatements counts the statements the database still needs to
-	// match the spec, from the plan built on the last reconcile.
-	//
-	// In Observe it is the size of the plan that was not applied. In Enforce
-	// it comes from a fresh plan built after applying, so it is what the
-	// database STILL lacks -- non-zero there means a statement keeps failing
-	// or keeps being undone, not that the controller is behind.
+	// match the spec. In Enforce it comes from a re-plan after applying, so
+	// non-zero means a statement keeps failing or being undone.
 	// +optional
 	PendingStatements int `json:"pendingStatements"`
 
-	// Pending lists those statements, capped at the first 50. The list is
-	// truncated whenever it is shorter than pendingStatements.
+	// Pending lists those statements, capped at the first 50.
 	// +optional
 	Pending []string `json:"pending,omitempty"`
 
-	// LastPlannedTime is when the database was last read and planned against,
-	// in either mode. LastAppliedTime does not move in Observe; this does.
+	// LastPlannedTime is when the database was last planned against, in either
+	// mode.
 	// +optional
 	LastPlannedTime *metav1.Time `json:"lastPlannedTime,omitempty"`
 }

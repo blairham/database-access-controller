@@ -17,28 +17,17 @@ import (
 	"github.com/blairham/database-controller/internal/rdsauth"
 )
 
-// EngineFactory opens an engine for one resource.
-//
-// It takes the whole object rather than the spec because a password Secret is
-// resolved in the resource's own namespace. It is a field on the Reconciler so
-// tests can drive the controller without a database.
+// EngineFactory opens an engine for one resource. It takes the whole object
+// because a password Secret is resolved in the resource's namespace.
 type EngineFactory func(ctx context.Context, da *dbv1alpha1.DatabaseAccess) (engine.Engine, error)
 
-// NewEngineFactory returns the production factory.
-//
-// The client is used only to read a password Secret, and only from the
-// resource's own namespace: a controller that fetched Secrets from any
-// namespace on the say-so of a resource in another would be a
-// privilege-escalation path.
+// NewEngineFactory returns the production factory. The client only reads a
+// password Secret, and only from the resource's own namespace.
 func NewEngineFactory(c client.Client) EngineFactory {
 	return func(ctx context.Context, da *dbv1alpha1.DatabaseAccess) (engine.Engine, error) {
 		spec := da.Spec
 
-		// The CRD enum rejects an unsupported engine at admission, so reaching
-		// this error means either a resource that predates the enum or a
-		// controller older than the CRD it is serving. Both are worth saying
-		// out loud rather than defaulting to PostgreSQL and provisioning the
-		// wrong dialect.
+		// The CRD enum normally rejects this at admission.
 		switch spec.Engine {
 		case "", dbv1alpha1.EnginePostgres:
 		default:

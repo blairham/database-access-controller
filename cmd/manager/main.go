@@ -1,15 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Blair Hamilton
 // SPDX-License-Identifier: Apache-2.0
 
-// Command manager runs the provisioner controllers.
-//
-// One binary hosts this repo's controllers, which all provision the data plane
-// of a managed database. They share the image, the RBAC, the leader election
-// lease and the metrics endpoint; --controllers selects which of them run.
-//
-// Controllers for other domains belong in their own repo, named for that
-// domain, the way aws-load-balancer-controller and the ACK per-service
-// controllers are.
+// Command manager runs the controllers; --controllers selects which.
 package main
 
 import (
@@ -43,8 +35,7 @@ func init() {
 }
 
 // watchedTypes returns the resources the enabled controllers watch, so
-// readiness can verify each one is actually watchable. A controller added
-// without a row here would report ready while unable to see its own resource.
+// readiness can verify each is watchable. A new controller needs a row here.
 func watchedTypes(names []string) []client.Object {
 	var out []client.Object
 	for _, n := range names {
@@ -85,10 +76,6 @@ func main() {
 		LeaderElectionID:       "database-controller.io",
 	}
 
-	// Restricting the cache is what --watch-namespace has to do. Setting the
-	// flag without this leaves the manager watching every namespace while
-	// reporting that it is scoped to one, which is the kind of gap nothing
-	// surfaces until a resource somewhere unexpected gets reconciled.
 	if watchNS != "" {
 		options.Cache = cache.Options{
 			DefaultNamespaces: map[string]cache.Config{watchNS: {}},
@@ -124,8 +111,7 @@ func main() {
 		delete(enabled, "databaseaccess")
 	}
 
-	// An unknown name is a typo in a Deployment argument, and silently running
-	// nothing is the worst possible response to it.
+	// An unknown name is a typo; refuse rather than silently run nothing.
 	if len(enabled) > 0 {
 		var unknown []string
 		for name := range enabled {
@@ -141,24 +127,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Readiness is "can I watch what I am here to watch", NOT a ping.
-	//
-	// A ping passes as soon as the HTTP server is listening, which says
-	// nothing about whether the manager can watch anything. With the CRD
-	// absent the controller logs `no matches for kind "DatabaseAccess"` every
-	// few seconds and never starts its workers -- while the pod reports Ready,
-	// a rollout completes, and any PDB or readiness gate downstream is
-	// satisfied. Measured on a rig: 1/1 Running, zero "Starting workers", and
-	// completely inert.
-	//
-	// ⚠ WaitForCacheSync IS NOT THE CHECK, and it looks like it should be. It
-	// waits on the informers the cache has been asked for, and when the CRD is
-	// missing the informer was never successfully registered -- so there is
-	// nothing to wait for and it returns true. Tried first, and the pod stayed
-	// Ready with the CRD deleted.
-	//
-	// GetInformer resolves the type through the RESTMapper, so it fails while
-	// the CRD is absent and succeeds once it exists.
+	// Readiness means the watched types resolve, not a ping: with the CRD
+	// absent the manager never starts workers but a ping still passes.
+	// WaitForCacheSync also passes then (no informer was registered);
+	// GetInformer goes through the RESTMapper and fails.
 	if err := mgr.AddReadyzCheck("readyz", func(req *http.Request) error {
 		ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
 		defer cancel()

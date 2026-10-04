@@ -31,16 +31,11 @@ type ConnConfig struct {
 	User     string
 	SSLMode  string
 
-	// Tokens supplies the IAM auth token used as the password. RDS rejects a
-	// plaintext connection for an IAM user, so SSLMode must stay at require or
-	// stricter when this is set -- and since the token is a bearer credential,
-	// anything short of verify-full hands it to whoever answers the connection.
-	//
-	// Exactly one of Tokens and Password is set.
+	// Tokens supplies the IAM auth token used as the password. RDS requires
+	// TLS for IAM users. Exactly one of Tokens and Password is set.
 	Tokens TokenSource
 
-	// Password is a static password, for a PostgreSQL that does not offer IAM
-	// authentication -- a self-managed server, or one in a development rig.
+	// Password is a static password, for a PostgreSQL without IAM auth.
 	Password string
 }
 
@@ -54,7 +49,8 @@ var (
 	_ Inspector = (*Conn)(nil)
 )
 
-// Connect opens an admin connection using an IAM auth token as the password.
+// Connect opens an admin connection, authenticating with an IAM token or a
+// static password.
 func Connect(ctx context.Context, cfg ConnConfig) (*Conn, error) {
 	port := cfg.Port
 	if port == 0 {
@@ -62,10 +58,8 @@ func Connect(ctx context.Context, cfg ConnConfig) (*Conn, error) {
 	}
 	sslMode := cfg.SSLMode
 	if sslMode == "" {
-		// verify-full, not require: require encrypts but accepts any
-		// certificate, so anyone able to answer on the endpoint's address
-		// receives the admin credential. RDS certificates verify against the
-		// embedded RDS CAs (see rootCAs).
+		// require would accept any certificate and hand the credential to
+		// whoever answers.
 		sslMode = "verify-full"
 	}
 
@@ -242,9 +236,7 @@ func (c *Conn) strings(ctx context.Context, what, query string, args ...any) ([]
 }
 
 // trust makes every TLS configuration pgx will try verify against pool. pgx
-// reads RootCAs at handshake time in both verify modes -- verify-full through
-// crypto/tls, verify-ca through its own VerifyPeerCertificate -- so setting it
-// after ParseConfig is enough.
+// reads RootCAs at handshake time, so setting it after ParseConfig is enough.
 func trust(cfg *pgx.ConnConfig, pool *x509.CertPool) {
 	if cfg.TLSConfig != nil {
 		cfg.TLSConfig.RootCAs = pool

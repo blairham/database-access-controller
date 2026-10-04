@@ -23,10 +23,6 @@ type Relation struct {
 }
 
 // AlterVerb returns the ALTER form that reassigns ownership of this relation.
-//
-// ALTER TABLE is permissive enough for a view in PostgreSQL, but the explicit
-// verb is what a reader expects to find when grepping for how a view got
-// reassigned.
 func (r Relation) AlterVerb() string {
 	switch r.Kind {
 	case RelKindMatView:
@@ -41,11 +37,6 @@ func (r Relation) AlterVerb() string {
 }
 
 // Inspector reads the current state of a PostgreSQL database.
-//
-// Planning reads before it writes so the plan holds concrete statements. The
-// job this replaces shipped server-side DO blocks that looped over pg_class at
-// execution time, which meant nothing could be reviewed before it ran and the
-// log reported only that the block completed.
 type Inspector interface {
 	// RoleExists reports whether the role is present in pg_roles.
 	RoleExists(ctx context.Context, role string) (bool, error)
@@ -53,16 +44,9 @@ type Inspector interface {
 	// SchemaExists reports whether the schema is present in pg_namespace.
 	SchemaExists(ctx context.Context, schema string) (bool, error)
 
-	// ObjectOwners returns the distinct roles that own relations in the schema,
-	// unioned with the schema's own owner.
-	//
-	// Owners come from pg_class, not from pg_namespace.nspowner alone. The
-	// schema owner is not reliably the object owner: a schema created by an
-	// admin and populated by an application role has two different answers, and
-	// deriving from nspowner alone silently leaves every relation in it without
-	// a default privilege registered. The schema owner is
-	// unioned in anyway so a greenfield schema with no relations yet still gets
-	// a default registered for whoever creates the first one.
+	// ObjectOwners returns the distinct roles that own relations in the schema
+	// (from pg_class; the schema owner is often not the object owner), unioned
+	// with the schema's owner so an empty schema still gets a default.
 	ObjectOwners(ctx context.Context, schema string) ([]string, error)
 
 	// RelationsNotOwnedBy returns the relations in the schema whose owner is
@@ -70,29 +54,13 @@ type Inspector interface {
 	// materialized views.
 	RelationsNotOwnedBy(ctx context.Context, schema, owner string) ([]Relation, error)
 
-	// The reads below make the plan a diff: a GRANT is planned only when the
-	// privilege it confers is not already there. Without them every reconcile
-	// re-issued every grant, so a plan could never come back empty and
-	// Observe mode would report the same statements forever on a database
-	// that needed nothing.
-	//
-	// ALL of them read EXPLICIT ACL entries (aclexplode over the stored ACL),
-	// never has_*_privilege. has_*_privilege answers "can this role do it",
-	// counting privileges inherited through role membership and the implicit
-	// rights of an owner, so it would call a grant present that was never
-	// made -- and the next migration that replaces the object, or the next
-	// change to that membership, would silently take the access away. The
-	// provisioner this replaces wrote explicit grants; so does this one.
-	//
-	// A NULL ACL means "the built-in default", which carries no explicit entry
-	// for the role, so it reads as missing and the GRANT is planned. That is
-	// also what makes the result match the old Job's: a GRANT on an object
-	// with a NULL ACL materializes it.
+	// The reads below make the plan a diff. They read EXPLICIT ACL entries
+	// (aclexplode), never has_*_privilege, which counts inherited and owner
+	// rights and would call a grant present that was never made. A NULL ACL
+	// has no explicit entries, so it reads as missing.
 
 	// RoleIsMemberOf reports whether member holds a direct membership in group,
-	// granted by anyone. On PostgreSQL 16 one membership can be recorded once
-	// per grantor; any of them is enough to authenticate, so one is enough to
-	// skip the GRANT.
+	// from any grantor.
 	RoleIsMemberOf(ctx context.Context, member, group string) (bool, error)
 
 	// DatabasePrivileges returns the privileges explicitly granted to grantee
@@ -105,8 +73,6 @@ type Inspector interface {
 
 	// RelationsLackPrivileges reports whether any relation of the given kinds
 	// in the schema is missing an explicit grant to grantee of any of privs.
-	// One missing privilege on one relation is enough to plan the
-	// schema-wide GRANT; re-granting what is already there is harmless.
 	RelationsLackPrivileges(ctx context.Context, schema, grantee string, kinds, privs []string) (bool, error)
 
 	// DefaultPrivileges returns the privileges registered by ALTER DEFAULT
@@ -114,21 +80,14 @@ type Inspector interface {
 	// "S" for sequences) to grantee.
 	DefaultPrivileges(ctx context.Context, owner, schema, objType, grantee string) ([]string, error)
 
-	// AdminAccessTo reports what the CONNECTING role (current_user) can do
-	// with role. Unlike the ACL reads above this one is deliberately
-	// EFFECTIVE (pg_has_role): the question is what the admin can do right
-	// now, through any path, not which grants are recorded.
+	// AdminAccessTo reports what current_user can do with role. Unlike the
+	// ACL reads above it is effective (pg_has_role), not explicit.
 	AdminAccessTo(ctx context.Context, role string) (AdminAccess, error)
 }
 
-// AdminAccess is the connecting role's standing with another role.
-//
-// ownerOf needs both halves. SET is what PostgreSQL 16 checks for
-// `CREATE SCHEMA ... AUTHORIZATION role` and `ALTER ... OWNER TO role`.
-// INHERIT (pg_has_role USAGE) is what lets the admin act with the role's own
-// privileges, which granting on a schema the role owns requires. With SET
-// alone that GRANT fails with "permission denied for schema" -- measured on
-// PostgreSQL 16.
+// AdminAccess is the connecting role's standing with another role. ownerOf
+// needs SET (for CREATE SCHEMA ... AUTHORIZATION and OWNER TO) and INHERIT (to
+// grant on a schema the role owns).
 type AdminAccess struct {
 	// Admin is current_user, for error messages.
 	Admin string
@@ -148,10 +107,7 @@ const (
 
 	QuerySchemaExists = `SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)`
 
-	// QueryObjectOwners unions relation owners with the schema owner. The
-	// relkind filter covers ordinary and partitioned tables, views,
-	// materialized views and sequences -- the same set whose ownership is
-	// reassigned, so the two halves agree.
+	// QueryObjectOwners uses the same relkinds whose ownership is reassigned.
 	QueryObjectOwners = `
 SELECT pg_get_userbyid(c.relowner) AS owner
   FROM pg_class c
@@ -164,29 +120,10 @@ SELECT pg_get_userbyid(n.nspowner)
  WHERE n.nspname = $1
  ORDER BY owner`
 
-	// QueryRelationsNotOwnedBy drives off pg_class rather than pg_tables and
-	// pg_sequences so one query covers every relkind. Driving off those two
-	// views is how views came to be missed: pg_tables is relkind IN ('r','p')
-	// and pg_sequences is 'S', so a view was never reassigned no matter how
-	// long ownership was requested. That is not cosmetic -- replacing a view
-	// requires ownership of it, so a migration doing DROP VIEW / CREATE OR
-	// REPLACE VIEW fails with "must be owner of view" while every table it
-	// reads was correctly reassigned.
-	//
-	// SEQUENCES OWNED BY A COLUMN ARE EXCLUDED. A serial or identity sequence
-	// is auto-dependent on its table's column (pg_depend.deptype = 'a'), and
-	// PostgreSQL refuses to change its owner independently:
-	//
-	//	ERROR: cannot change owner of sequence "events_id_seq" (SQLSTATE 0A000)
-	//	DETAIL: Sequence "events_id_seq" is linked to table "events".
-	//
-	// Its owner follows the table's, so reassigning the table is both
-	// necessary and sufficient. Emitting the ALTER at all is an error, not
-	// merely redundant.
-	//
-	// ORDER IS LOAD-BEARING for the same reason: tables come first, so a
-	// standalone sequence that a table's reassignment would have fixed is
-	// never attempted ahead of it.
+	// QueryRelationsNotOwnedBy reads pg_class so views are included (pg_tables
+	// and pg_sequences miss them). Column-owned sequences (deptype 'a') are
+	// excluded: PostgreSQL refuses to change their owner independently, and
+	// they follow their table. Tables sort first.
 	QueryRelationsNotOwnedBy = `
 SELECT c.relname, c.relkind::text, pg_get_userbyid(c.relowner)
   FROM pg_class c
@@ -212,13 +149,9 @@ SELECT c.relname, c.relkind::text, pg_get_userbyid(c.relowner)
             ELSE 2
           END,
           c.relname`
-	// The ACL reads. grantee is resolved by name inside the query: a role that
-	// does not exist yet matches no entry, so everything reads as missing,
-	// which is right -- the plan is about to create it.
 
-	// QueryAdminAccessTo returns current_user's effective standing with $1.
-	// A superuser reads true everywhere, which is why a suite connecting as
-	// postgres can never see the failures this guards against.
+	// QueryAdminAccessTo returns current_user's effective standing with $1. A
+	// superuser reads true everywhere.
 	QueryAdminAccessTo = `
 SELECT current_user::text,
        pg_has_role(current_user, r.oid, 'SET'),
@@ -237,6 +170,8 @@ SELECT EXISTS (
      AND g.rolname = $2
 )`
 
+	// The ACL reads resolve grantee by name, so a role that does not exist yet
+	// reads as holding nothing.
 	QueryDatabasePrivileges = `
 SELECT DISTINCT a.privilege_type
   FROM pg_database d, aclexplode(d.datacl) a
@@ -251,21 +186,10 @@ SELECT DISTINCT a.privilege_type
    AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = $2)
  ORDER BY 1`
 
-	// QueryRelationsLackPrivileges pairs every relation of the requested kinds
-	// with every wanted privilege and looks for one pair with no explicit
-	// entry. aclexplode of a NULL ACL yields no rows, so a relation still on
-	// the default ACL lacks everything.
-	//
-	// Relations the grantee OWNS are skipped. An owner holds every privilege
-	// implicitly, and PostgreSQL does not record an owner's self-grant on an
-	// object created after its own default privileges: such a table keeps a
-	// NULL relacl. Counting it would plan the GRANT on every reconcile forever
-	// and never report converged -- what stg showed for trader_tools and
-	// trading_reports_ro. If ownership later moves away, the relation is no
-	// longer skipped and the GRANT comes back.
-	//
-	// IS DISTINCT FROM, not <>: a grantee that does not exist yet resolves to
-	// NULL, and `relowner <> NULL` would drop EVERY relation and plan nothing.
+	// QueryRelationsLackPrivileges looks for any (relation, privilege) pair
+	// with no explicit ACL entry. Relations the grantee owns are skipped: an
+	// owner's self-grant is never recorded, so they would never converge. IS
+	// DISTINCT FROM because a grantee that does not exist yet resolves to NULL.
 	QueryRelationsLackPrivileges = `
 SELECT EXISTS (
   SELECT 1
@@ -295,10 +219,8 @@ SELECT DISTINCT a.privilege_type
  ORDER BY 1`
 )
 
-// Relation kinds a schema-wide GRANT reaches, as PostgreSQL enumerates them
-// for ON ALL TABLES / ON ALL SEQUENCES IN SCHEMA. ALL TABLES includes views,
-// materialized views, foreign and partitioned tables -- so the diff must
-// look at the same set, or a view missing its grant would read as converged.
+// Relation kinds that ON ALL TABLES / ON ALL SEQUENCES IN SCHEMA reach. The
+// diff must check the same set.
 var (
 	tableGrantKinds    = []string{RelKindTable, RelKindPartition, RelKindView, RelKindMatView, RelKindForeign}
 	sequenceGrantKinds = []string{RelKindSequence}

@@ -51,9 +51,7 @@ func alertExpr(rules, alert string) string {
 	return ""
 }
 
-// The stale alert is liveness for every resource, and Observe resources never
-// apply. Keyed on last_applied it would fire on every Observe resource two
-// hours after it was created while the controller reconciles it hourly.
+// The stale alert must key on last_planned: Observe resources never apply.
 func TestStaleAlertKeysOnLastPlanned(t *testing.T) {
 	expr := alertExpr(renderRules(t), "DatabaseAccessStale")
 	if expr == "" {
@@ -67,9 +65,7 @@ func TestStaleAlertKeysOnLastPlanned(t *testing.T) {
 	}
 }
 
-// NotConverged is opt-in: in Observe a non-zero pending count is expected until
-// the cutover, so it must not render unless asked for -- and when asked for, it
-// must read the pending gauge.
+// NotConverged is opt-in, and reads the pending gauge.
 func TestNotConvergedAlertIsOptIn(t *testing.T) {
 	if expr := alertExpr(renderRules(t), "DatabaseAccessNotConverged"); expr != "" {
 		t.Errorf("DatabaseAccessNotConverged rendered by default (expr %q), want it off", expr)

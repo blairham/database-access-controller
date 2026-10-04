@@ -11,9 +11,8 @@ import (
 	"time"
 )
 
-// TestBundleIsRDSRoots pins what the embedded file is: a non-trivial set of
-// Amazon RDS root CAs, none expired. A truncated download or a wrong URL in
-// hack/update-rds-ca.sh fails here rather than as a TLS error in a cluster.
+// TestBundleIsRDSRoots pins that the embedded file is a non-trivial set of
+// unexpired RDS root CAs, catching a bad hack/update-rds-ca.sh download.
 func TestBundleIsRDSRoots(t *testing.T) {
 	var n int
 	for rest := bundle; ; {

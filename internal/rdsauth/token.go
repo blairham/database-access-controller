@@ -2,12 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package rdsauth mints the short-lived IAM authentication tokens used to
-// connect to RDS and Aurora as a database user, with no password anywhere.
-//
-// The Job this replaces shelled out to `aws rds generate-db-auth-token` after
-// apk-installing the AWS CLI at container start, which cost roughly twenty
-// seconds of startup per run and put a CLI in the image for one call. This is
-// that call.
+// connect to RDS and Aurora as a database user.
 package rdsauth
 
 import (
@@ -23,19 +18,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/rds/auth"
 )
 
-// tokenLifetime is how long RDS accepts a generated token. AWS fixes this at
-// 15 minutes.
+// tokenLifetime is how long RDS accepts a generated token.
 const tokenLifetime = 15 * time.Minute
 
-// refreshMargin re-mints a token before it expires, so a connection opened just
-// as the clock runs out does not fail.
+// refreshMargin re-mints a token this long before it expires.
 const refreshMargin = 2 * time.Minute
 
-// TokenProvider mints IAM auth tokens for one database user on one endpoint.
-//
-// Tokens are cached until shortly before they expire. A controller reconciles
-// far more often than every fifteen minutes, and signing a token per reconcile
-// is a needless STS-shaped dependency in the hot path.
+// TokenProvider mints IAM auth tokens for one database user on one endpoint,
+// caching each until shortly before it expires.
 type TokenProvider struct {
 	endpoint string
 	region   string
@@ -47,9 +37,6 @@ type TokenProvider struct {
 	expiresAt time.Time
 
 	// now and build are injectable so the caching policy can be tested.
-	// Comparing two token strings cannot show whether a token was re-minted:
-	// BuildAuthToken signs with the real wall clock, so two mints in the same
-	// second are byte-identical regardless of the cache.
 	now   func() time.Time
 	build func(ctx context.Context, endpoint, region, user string, creds aws.CredentialsProvider) (string, error)
 }
@@ -62,20 +49,15 @@ type Config struct {
 	// Port is the database port.
 	Port int32
 
-	// Region is the AWS region the instance lives in. The token is signed for
-	// this region and is rejected anywhere else.
+	// Region is the AWS region the token is signed for.
 	Region string
 
 	// User is the database user the token authenticates as.
 	User string
 }
 
-// New returns a TokenProvider using the ambient AWS credentials.
-//
-// In cluster those credentials come from Pod Identity: the ServiceAccount is
-// associated with an IAM role holding rds-db:connect on this user's dbuser ARN,
-// and the SDK picks the association up from the container credentials endpoint
-// with no configuration here.
+// New returns a TokenProvider using the ambient AWS credentials (in cluster,
+// typically EKS Pod Identity or IRSA), which need rds-db:connect on the user.
 func New(ctx context.Context, cfg Config) (*TokenProvider, error) {
 	awsCfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(cfg.Region))
 	if err != nil {
