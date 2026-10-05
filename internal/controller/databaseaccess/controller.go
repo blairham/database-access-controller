@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -78,8 +79,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// Only carry the finalizer when deletion has work to do; Observe never
 	// revokes.
 	if da.Spec.RevokeOnDelete && !observing(&da) && !controllerutil.ContainsFinalizer(&da, finalizer) {
-		controllerutil.AddFinalizer(&da, finalizer)
-		if err := r.Update(ctx, &da); err != nil {
+		if err := r.setFinalizer(ctx, &da, true); err != nil {
 			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
 		}
 	}
@@ -171,12 +171,61 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, da *dbv1alpha1.Databas
 		}
 	}
 
-	controllerutil.RemoveFinalizer(da, finalizer)
-	if err := r.Update(ctx, da); err != nil {
+	if err := r.setFinalizer(ctx, da, false); err != nil {
 		return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
 	}
 	forget(da.Namespace, da.Name)
 	return ctrl.Result{}, nil
+}
+
+// setFinalizer adds (present) or removes our finalizer and copies the
+// resulting metadata back into da.
+//
+// It patches a fresh read rather than updating da. da was read at the start
+// of the reconcile, and on the delete path the revoke plan runs in between, so
+// any write to the object meanwhile (a status update, an annotation, another
+// controller's finalizer) leaves da's resourceVersion stale. A full Update
+// then fails with "the object has been modified", and the work queue retries
+// the whole reconcile: the revoke plan runs again. stg showed exactly that on
+// 2026-10-04.
+//
+// The patch keeps the optimistic lock. A JSON merge patch replaces
+// metadata.finalizers wholesale, so a lock-free patch built from a list that
+// went stale would, on the add path, silently drop a finalizer another
+// controller added meanwhile, and on the delete path write back one it had
+// just removed. (The API forbids adding finalizers to an object being deleted,
+// so that fails loudly, but it still fails the reconcile.) Reading immediately
+// before patching shrinks the conflict window to one round trip, and
+// RetryOnConflict absorbs a conflict there, re-reading, instead of returning
+// to the queue.
+func (r *Reconciler) setFinalizer(ctx context.Context, da *dbv1alpha1.DatabaseAccess, present bool) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var fresh dbv1alpha1.DatabaseAccess
+		if err := r.Get(ctx, client.ObjectKeyFromObject(da), &fresh); err != nil {
+			// Already gone: nothing left to release.
+			if !present && apierrors.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		base := fresh.DeepCopy()
+		var changed bool
+		if present {
+			changed = controllerutil.AddFinalizer(&fresh, finalizer)
+		} else {
+			changed = controllerutil.RemoveFinalizer(&fresh, finalizer)
+		}
+		if changed {
+			patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
+			if err := r.Patch(ctx, &fresh, patch); err != nil {
+				return err
+			}
+		}
+		// Carry the new resourceVersion forward, or the status write that
+		// follows on the add path would conflict in turn.
+		da.ObjectMeta = *fresh.ObjectMeta.DeepCopy()
+		return nil
+	})
 }
 
 // fail records the error on the resource and returns it so the work queue
