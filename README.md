@@ -113,8 +113,12 @@ it into every `DatabaseAccess` created without an `sslMode`. Those keep
 
 ## Running it in a cluster
 
+Each release publishes the chart to `oci://ghcr.io/blairham/charts`, signed
+like the image, so a pinned version installs without a checkout:
+
 ```sh
-helm install database-controller charts/database-controller \
+helm install database-controller oci://ghcr.io/blairham/charts/database-controller \
+  --version <version> \
   --namespace database-controller-system --create-namespace \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::<acct>:role/<role>
 ```
