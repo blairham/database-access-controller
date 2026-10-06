@@ -11,7 +11,7 @@ RDS, Aurora or a self-managed PostgreSQL.
 
 - Module: `github.com/blairham/database-controller`
 - Go 1.26, `controller-runtime` v0.25, `aws-sdk-go-v2`, `pgx/v5`,
-  `hashicorp/cli`
+  `hashicorp/cli`, [`k8s-controller-kit`](https://github.com/blairham/k8s-controller-kit)
 
 ## Quick Reference
 
@@ -33,12 +33,11 @@ make pg-down            # stop the test database
 
 ```
 apis/db/v1alpha1/                DatabaseAccess API + generated deepcopy
-internal/plan/                   engine-neutral Plan: Describe, Apply, Hash
 internal/engine/                 the Engine interface each database implements
 internal/engine/postgres/        PostgreSQL statements, inspection, plan building
 internal/rdsauth/                IAM auth tokens for RDS and Aurora
 internal/rdsca/                  embedded RDS CA bundle (hack/update-rds-ca.sh refreshes it)
-internal/controller/             the DatabaseAccess reconciler
+internal/controller/             the DatabaseAccess API wired onto the kit's reconciler
 cmd/manager/                     the controller binary; --controllers selects which run
 cmd/dbctl/                       plan and apply from a terminal
 config/crd/, config/rbac/        generated manifests -- never hand-edit
@@ -103,6 +102,16 @@ provisions **inside** the database, in the database's own protocol.
 Provisioning is a `plan.Plan`: an ordered list of steps that can be printed
 before being run, so the controller and `dbctl plan` share one code path. The
 plan is a diff against the database's current state.
+
+The plan type and the reconcile loop -- Enforce and Observe, the `Ready` and
+`Converged` conditions, the finalizer, the per-resource metrics, the shared
+`main` -- come from [k8s-controller-kit](https://github.com/blairham/k8s-controller-kit),
+pinned in `go.mod`, which kafka-controller shares. A change to any of those
+belongs in the kit: land it there, tag it, then bump the version here. This
+repo keeps the engine, the API and the mapping between them
+(`internal/controller/databaseaccess/controller.go`). Pruning is not wired
+in: the kit supports it, but revoking grants a spec stops declaring would
+change what a released controller does, and needs its own decision.
 
 `Engine` is the per-database interface. PostgreSQL (including RDS and Aurora)
 is implemented; MySQL and SQL Server are planned. DynamoDB is out of scope: it

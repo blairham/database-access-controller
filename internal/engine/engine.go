@@ -9,7 +9,7 @@ package engine
 import (
 	"context"
 
-	"github.com/blairham/database-controller/internal/plan"
+	"github.com/blairham/k8s-controller-kit/plan"
 )
 
 // Kind names a supported database engine.

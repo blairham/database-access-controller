@@ -14,13 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blairham/k8s-controller-kit/plan"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
 	"github.com/blairham/database-controller/internal/engine"
-	"github.com/blairham/database-controller/internal/plan"
 )
 
 // fakeEngine records what it was asked to do and returns a canned plan.

@@ -34,6 +34,10 @@ import (
 	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
 )
 
+// maxPending is the cap k8s-controller-kit puts on status.pending; the
+// observe tests check it holds.
+const maxPending = 50
+
 var (
 	testEnv   *envtest.Environment
 	testCfg   *rest.Config

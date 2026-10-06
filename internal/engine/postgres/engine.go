@@ -7,8 +7,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/blairham/k8s-controller-kit/plan"
+
 	"github.com/blairham/database-controller/internal/engine"
-	"github.com/blairham/database-controller/internal/plan"
 )
 
 // Engine provisions roles, schemas and grants on PostgreSQL, including RDS and
