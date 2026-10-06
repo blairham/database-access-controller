@@ -13,8 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
 	"github.com/blairham/database-controller/internal/engine"
@@ -28,36 +27,50 @@ func uniqueName(base string) string {
 	return fmt.Sprintf("%s-%d", base, metricsRun.Add(1))
 }
 
-// series reads one resource's value off a vector without creating it, as
-// WithLabelValues would.
-func series(t *testing.T, vec *prometheus.GaugeVec, name string) (float64, bool) {
+// The series the controller exports, by the names the chart's alerts use. The
+// gauges belong to k8s-controller-kit's reconciler, so the tests read them
+// back from controller-runtime's registry, where it registers them.
+const (
+	readyGauge       = "database_controller_access_ready"
+	warningsGauge    = "database_controller_access_warnings"
+	lastAppliedGauge = "database_controller_access_last_applied_timestamp_seconds"
+	lastPlannedGauge = "database_controller_access_last_planned_timestamp_seconds"
+	pendingGauge     = "database_controller_access_pending_statements"
+)
+
+// series reads one resource's value of a series, reporting whether the
+// series exists for it at all.
+func series(t *testing.T, metric, name string) (float64, bool) {
 	t.Helper()
-	ch := make(chan prometheus.Metric, 256)
-	go func() { vec.Collect(ch); close(ch) }()
+	families, err := ctrlmetrics.Registry.Gather()
+	if err != nil {
+		t.Fatalf("gathering metrics: %v", err)
+	}
 	var (
 		value float64
 		found bool
 	)
-	for m := range ch {
-		var pb dto.Metric
-		if err := m.Write(&pb); err != nil {
-			t.Fatalf("reading metric: %v", err)
+	for _, mf := range families {
+		if mf.GetName() != metric {
+			continue
 		}
-		labels := map[string]string{}
-		for _, l := range pb.GetLabel() {
-			labels[l.GetName()] = l.GetValue()
-		}
-		if labels["namespace"] == "default" && labels["name"] == name {
-			value, found = pb.GetGauge().GetValue(), true
+		for _, pb := range mf.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range pb.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			if labels["namespace"] == "default" && labels["name"] == name {
+				value, found = pb.GetGauge().GetValue(), true
+			}
 		}
 	}
 	return value, found
 }
 
-func waitForSeries(t *testing.T, vec *prometheus.GaugeVec, name string, want float64) {
+func waitForSeries(t *testing.T, metric, name string, want float64) {
 	t.Helper()
 	eventually(t, 10*time.Second, name+" series to read "+fmt.Sprint(want), func() bool {
-		v, ok := series(t, vec, name)
+		v, ok := series(t, metric, name)
 		return ok && v == want
 	})
 }

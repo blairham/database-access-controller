@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blairham/k8s-controller-kit/plan"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
 	"github.com/blairham/database-controller/internal/engine"
-	"github.com/blairham/database-controller/internal/plan"
 )
 
 // countingEngine returns a plan of `pending` steps and counts every Apply,

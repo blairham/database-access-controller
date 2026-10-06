@@ -187,12 +187,11 @@ a statement that keeps failing or being undone.
 
 ```
 apis/db/v1alpha1/                the DatabaseAccess API
-internal/plan/                   engine-neutral Plan: Describe, Apply, Hash
 internal/engine/                 the Engine interface every database implements
 internal/engine/postgres/        PostgreSQL: statements, inspection, plan building
 internal/rdsauth/                IAM auth tokens for RDS and Aurora
 internal/rdsca/                  embedded RDS CA bundle
-internal/controller/             the DatabaseAccess reconciler
+internal/controller/             the DatabaseAccess API wired onto k8s-controller-kit
 cmd/manager/                     the controller binary
 cmd/dbctl/                       plan and apply from a terminal
 charts/database-controller/      the Helm chart
