@@ -62,6 +62,11 @@ pushes `ghcr.io/blairham/database-controller:<version>` (amd64 and arm64) and a
 `dbctl` archive per platform, signed with keyless cosign and carrying SLSA
 provenance (see `SECURITY.md`). A push to main only validates. The release
 refuses to publish when `Chart.yaml`'s `appVersion` does not match the tag.
+The same tag runs `chart.yml`, which pushes the chart to
+`oci://ghcr.io/blairham/charts/database-controller:<version>` and signs it; it
+refuses unless both `version` and `appVersion` match the tag. It is its own
+workflow so an existing tag can be published alone:
+`gh workflow run chart.yml -f tag=vX.Y.Z`.
 
 To cut a release: bump `version` and `appVersion` in
 `charts/database-controller/Chart.yaml`, commit, then tag `vX.Y.Z` (signed).
