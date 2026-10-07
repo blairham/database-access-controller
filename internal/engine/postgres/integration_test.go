@@ -700,3 +700,162 @@ func TestANewRoleIsGrantedOnExistingTables(t *testing.T) {
 		t.Errorf("plan for a not-yet-created role is missing %q:\n%s", want, p.Describe())
 	}
 }
+
+// Hyphenated role names (#27) are legal only quoted. Every statement and every
+// catalog lookup must therefore carry the name as itself: a path that dropped
+// the quotes would fail to parse, and one that compared a folded or quoted
+// form against the catalog would never converge. The app role owns a table,
+// so the default-privileges path sees a hyphenated owner too.
+func TestHyphenatedNamesApplyAndConverge(t *testing.T) {
+	ctx := context.Background()
+	c := connect(t)
+	seed(t, c, "itest_hyphen", "itest-hyphen-app")
+	t.Cleanup(func() {
+		_ = c.Exec(ctx, `DROP SCHEMA IF EXISTS "itest_hyphen" CASCADE`)
+		dropRole(t, c, "itest-hyphen-reader")
+		dropRole(t, c, "itest-hyphen-app")
+	})
+
+	e := New(c, c, nil)
+	for _, access := range []engine.Access{
+		{
+			Database:   "postgres",
+			Principal:  "itest-hyphen-reader",
+			Namespaces: []engine.Namespace{{Name: "itest_hyphen", Privileges: []string{"SELECT", "UPDATE"}}},
+		},
+		{
+			Database:   "postgres",
+			Principal:  "itest-hyphen-app",
+			Namespaces: []engine.Namespace{{Name: "itest_hyphen", Privileges: []string{"SELECT", "INSERT"}, Owner: true}},
+		},
+	} {
+		p, err := e.BuildPlan(ctx, access)
+		if err != nil {
+			t.Fatalf("%s: BuildPlan: %v", access.Principal, err)
+		}
+		if _, err := p.Apply(ctx); err != nil {
+			t.Fatalf("%s: applying: %v\n\nplan:\n%s", access.Principal, err, p.Describe())
+		}
+		again, err := e.BuildPlan(ctx, access)
+		if err != nil {
+			t.Fatalf("%s: re-planning: %v", access.Principal, err)
+		}
+		if again.Len() != 0 {
+			t.Errorf("%s: plan did not converge, want 0 statements:\n%s", access.Principal, again.Describe())
+		}
+	}
+
+	var can bool
+	if err := c.c.QueryRow(ctx,
+		`SELECT has_table_privilege('itest-hyphen-reader', '"itest_hyphen".fixtures', 'SELECT')`).Scan(&can); err != nil {
+		t.Fatalf("checking privilege: %v", err)
+	}
+	if !can {
+		t.Error(`itest-hyphen-reader cannot SELECT from "itest_hyphen".fixtures after the plan applied`)
+	}
+}
+
+// connectTo opens a second connection like connect's, to another database on
+// the same server.
+func connectTo(t *testing.T, database string) pgxConn {
+	t.Helper()
+	cfg, err := pgx.ParseConfig(os.Getenv("PGTEST_DSN"))
+	if err != nil {
+		t.Fatalf("parsing PGTEST_DSN: %v", err)
+	}
+	cfg.Database = database
+	c, err := pgx.ConnectConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("connecting to database %s: %v", database, err)
+	}
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
+	return pgxConn{c}
+}
+
+// One role shared by resources on different databases (#27): roles are
+// server-wide, grants are per database, so revoking one database's access
+// must leave the other's intact. CREATE and a table grant are checked, not
+// CONNECT, which PUBLIC holds on a new database and would pass regardless.
+func TestOneRoleAcrossDatabasesRevokesIndependently(t *testing.T) {
+	ctx := context.Background()
+	admin := connect(t)
+	const role = "itest-svc-xyz"
+	dbs := []string{"itest-svc-xyz-dev", "itest-svc-xyz-qa"}
+
+	dropRole(t, admin, role)
+	for _, db := range dbs {
+		if err := admin.Exec(ctx, `DROP DATABASE IF EXISTS `+QuoteIdent(db)+` WITH (FORCE)`); err != nil {
+			t.Fatalf("dropping database %s: %v", db, err)
+		}
+		if err := admin.Exec(ctx, `CREATE DATABASE `+QuoteIdent(db)); err != nil {
+			t.Fatalf("creating database %s: %v", db, err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, db := range dbs {
+			_ = admin.Exec(ctx, `DROP DATABASE IF EXISTS `+QuoteIdent(db)+` WITH (FORCE)`)
+		}
+		dropRole(t, admin, role)
+	})
+
+	conns := map[string]pgxConn{}
+	accesses := map[string]engine.Access{}
+	for _, db := range dbs {
+		c := connectTo(t, db)
+		if err := c.Exec(ctx, `CREATE TABLE public.orders (id bigint PRIMARY KEY)`); err != nil {
+			t.Fatalf("seeding %s: %v", db, err)
+		}
+		conns[db] = c
+		accesses[db] = engine.Access{
+			Database:   db,
+			Principal:  role,
+			Namespaces: []engine.Namespace{{Name: "public", Privileges: []string{"SELECT", "INSERT"}}},
+		}
+		p, err := New(c, c, nil).BuildPlan(ctx, accesses[db])
+		if err != nil {
+			t.Fatalf("%s: BuildPlan: %v", db, err)
+		}
+		if _, err := p.Apply(ctx); err != nil {
+			t.Fatalf("%s: applying: %v\n\nplan:\n%s", db, err, p.Describe())
+		}
+	}
+
+	granted := func(db string) (create, selectOrders bool) {
+		t.Helper()
+		err := conns[db].c.QueryRow(ctx,
+			`SELECT has_database_privilege($1, current_database(), 'CREATE'),
+			        has_table_privilege($1, 'public.orders', 'SELECT')`, role).Scan(&create, &selectOrders)
+		if err != nil {
+			t.Fatalf("%s: reading privileges: %v", db, err)
+		}
+		return create, selectOrders
+	}
+	for _, db := range dbs {
+		if c, s := granted(db); !c || !s {
+			t.Fatalf("%s before revoke: CREATE=%t SELECT=%t, want both", db, c, s)
+		}
+	}
+
+	revoke, err := New(conns[dbs[0]], conns[dbs[0]], nil).BuildRevokePlan(ctx, accesses[dbs[0]])
+	if err != nil {
+		t.Fatalf("BuildRevokePlan: %v", err)
+	}
+	if _, err := revoke.Apply(ctx); err != nil {
+		t.Fatalf("revoking %s: %v", dbs[0], err)
+	}
+
+	if c, s := granted(dbs[0]); c || s {
+		t.Errorf("%s after its revoke: CREATE=%t SELECT=%t, want neither", dbs[0], c, s)
+	}
+	if c, s := granted(dbs[1]); !c || !s {
+		t.Errorf("%s after revoking %s: CREATE=%t SELECT=%t, want both kept", dbs[1], dbs[0], c, s)
+	}
+	var exists bool
+	if err := admin.c.QueryRow(ctx, `SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = $1)`, role).
+		Scan(&exists); err != nil {
+		t.Fatalf("checking role: %v", err)
+	}
+	if !exists {
+		t.Errorf("role %s was dropped by one database's revoke", role)
+	}
+}

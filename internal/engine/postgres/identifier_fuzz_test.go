@@ -14,7 +14,7 @@ import (
 var identifierSeeds = []string{
 	"app", "app_writer", "_leading", "a1", "",
 	"TradeWriter", "1role", `ro"le`, `"`, `""`, `"; DROP DATABASE appdb; --`,
-	"role; DROP DATABASE appdb", "role -- comment", "role/*x*/", "trade-writer",
+	"role; DROP DATABASE appdb", "role -- comment", "role/*x*/", "trade-writer", "-writer", "writer-", "a--b",
 	"tab\there", "new\nline", "nul\x00byte", "ápp", "аpp", // second is Cyrillic а
 	strings.Repeat("a", 63), strings.Repeat("a", 64),
 }
@@ -29,22 +29,44 @@ func FuzzValidateIdent(f *testing.F) {
 		if ValidateIdent("role", name) != nil {
 			return
 		}
-		if name == "" || len(name) > 63 {
-			t.Fatalf("accepted %q of length %d", name, len(name))
-		}
-		if name[0] >= '0' && name[0] <= '9' {
-			t.Fatalf("accepted %q, which starts with a digit", name)
-		}
-		for i := 0; i < len(name); i++ {
-			c := name[i]
-			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
-				t.Fatalf("accepted %q, which contains byte %q at %d", name, c, i)
-			}
-		}
-		if got, want := QuoteIdent(name), `"`+name+`"`; got != want {
-			t.Fatalf("QuoteIdent(%q) = %q, want %q for a validated name", name, got, want)
-		}
+		checkAccepted(t, name, false)
 	})
+}
+
+// FuzzValidateHyphenatedIdent pins the same, except that single hyphens may
+// sit between other characters: never leading, trailing or doubled.
+func FuzzValidateHyphenatedIdent(f *testing.F) {
+	for _, s := range identifierSeeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, name string) {
+		if ValidateHyphenatedIdent("role", name) != nil {
+			return
+		}
+		checkAccepted(t, name, true)
+	})
+}
+
+func checkAccepted(t *testing.T, name string, hyphens bool) {
+	t.Helper()
+	if name == "" || len(name) > 63 {
+		t.Fatalf("accepted %q of length %d", name, len(name))
+	}
+	if (name[0] >= '0' && name[0] <= '9') || name[0] == '-' {
+		t.Fatalf("accepted %q, which starts with %q", name, name[0])
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' && (c != '-' || !hyphens) {
+			t.Fatalf("accepted %q, which contains byte %q at %d", name, c, i)
+		}
+	}
+	if strings.Contains(name, "--") || name[len(name)-1] == '-' {
+		t.Fatalf("accepted %q, which has a doubled or trailing hyphen", name)
+	}
+	if got, want := QuoteIdent(name), `"`+name+`"`; got != want {
+		t.Fatalf("QuoteIdent(%q) = %q, want %q for a validated name", name, got, want)
+	}
 }
 
 // FuzzQuoteIdent pins that, whatever the input, the output is exactly one

@@ -40,10 +40,10 @@ func (e *Engine) Close() error {
 
 // Validate rejects an Access this engine cannot honor.
 func (e *Engine) Validate(a engine.Access) error {
-	if err := ValidateIdent("role", a.Principal); err != nil {
+	if err := ValidateHyphenatedIdent("role", a.Principal); err != nil {
 		return err
 	}
-	if err := ValidateIdent("database", a.Database); err != nil {
+	if err := ValidateHyphenatedIdent("database", a.Database); err != nil {
 		return err
 	}
 	seen := map[string]bool{}
@@ -302,7 +302,7 @@ func (e *Engine) addDefaultPrivileges(
 		if owner == principal {
 			continue
 		}
-		if err := ValidateIdent("owner role", owner); err != nil {
+		if err := ValidateHyphenatedIdent("owner role", owner); err != nil {
 			return fmt.Errorf("schema %q: %w", schema, err)
 		}
 		have, err := e.inspect.DefaultPrivileges(ctx, owner, schema, defaclObjType(objType), principal)
