@@ -17,7 +17,7 @@ import (
 
 // identPattern is the shape of a name that also reads the same unquoted. It
 // applies to schemas, where hand-written SQL such as search_path is most often
-// left unquoted, and to relations.
+// left unquoted.
 var identPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
 // hyphenatedPattern also allows single hyphens between other characters, for
@@ -36,6 +36,17 @@ func ValidateHyphenatedIdent(kind, name string) error {
 	return validate(kind, name, hyphenatedPattern)
 }
 
+// ValidateCatalogIdent checks only what PostgreSQL itself would get wrong: an
+// empty name, or one it would truncate. It is for names read back from the
+// catalog, such as relations under ownerOf (#30). Those already exist, so the
+// naming rule has nothing to protect, and Entity Framework's Orders or
+// __EFMigrationsHistory are legitimate; QuoteIdent alone keeps them one
+// identifier.
+func ValidateCatalogIdent(kind, name string) error {
+	return validate(kind, name, nil)
+}
+
+// validate checks name's length and, unless pattern is nil, its shape.
 func validate(kind, name string, pattern *regexp.Regexp) error {
 	if name == "" {
 		return fmt.Errorf("%s name is empty", kind)
@@ -44,7 +55,7 @@ func validate(kind, name string, pattern *regexp.Regexp) error {
 		// PostgreSQL silently truncates at NAMEDATALEN-1.
 		return fmt.Errorf("%s name %q exceeds 63 bytes and would be silently truncated by PostgreSQL", kind, name)
 	}
-	if !pattern.MatchString(name) {
+	if pattern != nil && !pattern.MatchString(name) {
 		return fmt.Errorf("%s name %q must match %s", kind, name, pattern)
 	}
 	return nil

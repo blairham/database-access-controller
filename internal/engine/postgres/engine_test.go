@@ -220,6 +220,33 @@ func TestBuildPlanReassignsViewsAndMatviews(t *testing.T) {
 	mustNotContain(t, got, `"already_mine"`)
 }
 
+// Relation names come from the catalog, so ownerOf must reassign Entity
+// Framework's PascalCase tables, and even a name holding a quote, rather than
+// fail the whole plan on the spec naming rule (#30).
+func TestOwnerOfReassignsRelationsWithAnyCatalogName(t *testing.T) {
+	e := New(nil, fakeInspector{
+		schemas: map[string]bool{"public": true},
+		owners:  map[string][]string{"public": {"orders_app"}},
+		relations: map[string][]Relation{"public": {
+			{Name: "Orders", Kind: RelKindTable, Owner: "postgres"},
+			{Name: "__EFMigrationsHistory", Kind: RelKindTable, Owner: "postgres"},
+			{Name: `we"ird`, Kind: RelKindTable, Owner: "postgres"},
+		}},
+	}, nil)
+
+	got := planText(t, e, engine.Access{
+		Database:  "appdb",
+		Principal: "orders_app",
+		Namespaces: []engine.Namespace{
+			{Name: "public", Privileges: []string{"SELECT"}, Owner: true},
+		},
+	})
+
+	mustContain(t, got, `ALTER TABLE "public"."Orders" OWNER TO "orders_app";`)
+	mustContain(t, got, `ALTER TABLE "public"."__EFMigrationsHistory" OWNER TO "orders_app";`)
+	mustContain(t, got, `ALTER TABLE "public"."we""ird" OWNER TO "orders_app";`)
+}
+
 // CREATE SCHEMA is emitted only when the schema is absent: IF NOT EXISTS ...
 // AUTHORIZATION still checks SET ROLE first.
 func TestBuildPlanCreatesSchemaOnlyWhenAbsent(t *testing.T) {

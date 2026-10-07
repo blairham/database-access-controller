@@ -206,6 +206,65 @@ func TestOwnershipReassignsViewsAndMatviews(t *testing.T) {
 	}
 }
 
+// ownerOf must reassign relations whose names the spec rule would reject:
+// Entity Framework's PascalCase tables, and a name holding a quote, which
+// QuoteIdent alone keeps a single identifier (#30).
+func TestOwnerOfReassignsPascalCaseAndQuotedRelations(t *testing.T) {
+	ctx := context.Background()
+	c := connect(t)
+	seed(t, c, "itest_pascal", "itest_pascal_app")
+	t.Cleanup(func() {
+		_ = c.Exec(ctx, `DROP SCHEMA IF EXISTS itest_pascal CASCADE`)
+		dropRole(t, c, "itest_pascal_app")
+	})
+
+	rels := []string{"Orders", "__EFMigrationsHistory", `we"ird`}
+	for _, rel := range rels {
+		stmt := fmt.Sprintf(`CREATE TABLE itest_pascal.%s (id int)`, QuoteIdent(rel))
+		if err := c.Exec(ctx, stmt); err != nil {
+			t.Fatalf("seeding with %q: %v", stmt, err)
+		}
+	}
+
+	e := New(c, c, nil)
+	access := engine.Access{
+		Database:  "postgres",
+		Principal: "itest_pascal_app",
+		Namespaces: []engine.Namespace{
+			{Name: "itest_pascal", Privileges: []string{"SELECT", "INSERT"}, Owner: true},
+		},
+	}
+	p, err := e.BuildPlan(ctx, access)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if _, err := p.Apply(ctx); err != nil {
+		t.Fatalf("applying: %v\n\nplan:\n%s", err, p.Describe())
+	}
+
+	for _, rel := range rels {
+		var owner string
+		err := c.c.QueryRow(ctx, `
+			SELECT pg_get_userbyid(c.relowner)
+			  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+			 WHERE n.nspname = 'itest_pascal' AND c.relname = $1`, rel).Scan(&owner)
+		if err != nil {
+			t.Fatalf("reading owner of %s: %v", rel, err)
+		}
+		if owner != "itest_pascal_app" {
+			t.Errorf("%s is owned by %q, want itest_pascal_app", rel, owner)
+		}
+	}
+
+	again, err := e.BuildPlan(ctx, access)
+	if err != nil {
+		t.Fatalf("re-planning: %v", err)
+	}
+	if again.Len() != 0 {
+		t.Errorf("plan did not converge, want 0 statements:\n%s", again.Describe())
+	}
+}
+
 // The privilege split must produce a sequence grant PostgreSQL accepts
 // (INSERT is invalid on a sequence).
 func TestSequenceGrantAcceptsTheSplitPrivileges(t *testing.T) {

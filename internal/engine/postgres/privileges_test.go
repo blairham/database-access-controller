@@ -140,6 +140,29 @@ func TestValidateHyphenatedIdent(t *testing.T) {
 	}
 }
 
+// Catalog names are checked for length only; QuoteIdent is their guard (#30).
+func TestValidateCatalogIdent(t *testing.T) {
+	valid := []string{
+		"orders", "Orders", "__EFMigrationsHistory", `we"ird`, "a-b", "a.b", "1st",
+		"a12345678901234567890123456789012345678901234567890123456789012",
+	}
+	for _, name := range valid {
+		if err := ValidateCatalogIdent("relation", name); err != nil {
+			t.Errorf("ValidateCatalogIdent(%q) = %v, want nil", name, err)
+		}
+	}
+
+	invalid := map[string]string{
+		"empty":         "",
+		"over 63 bytes": "A123456789012345678901234567890123456789012345678901234567890123",
+	}
+	for why, name := range invalid {
+		if err := ValidateCatalogIdent("relation", name); err == nil {
+			t.Errorf("ValidateCatalogIdent(%q) accepted a %s name, want an error", name, why)
+		}
+	}
+}
+
 func TestQuoteIdent(t *testing.T) {
 	if got, want := QuoteIdent("app"), `"app"`; got != want {
 		t.Errorf("QuoteIdent = %q, want %q", got, want)
