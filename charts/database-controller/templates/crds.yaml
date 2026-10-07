@@ -174,8 +174,12 @@ spec:
                       rule: '!has(self.method) || self.method != ''password'' || has(self.passwordSecretRef)'
                   database:
                     default: appdb
-                    description: Database is the database to connect to and grant
-                      CONNECT on.
+                    description: |-
+                      Database is the database to connect to and grant CONNECT on. Single
+                      hyphens between other characters are allowed; such a name must be
+                      double-quoted in hand-written SQL.
+                    maxLength: 63
+                    pattern: ^[a-z_][a-z0-9_]*(-[a-z0-9_]+)*$
                     type: string
                   endpoint:
                     description: Endpoint is the instance's hostname.
@@ -231,10 +235,12 @@ spec:
                   itself is never dropped.
                 type: boolean
               role:
-                description: Role is the per-service PostgreSQL role to create and
-                  grant to.
+                description: |-
+                  Role is the per-service PostgreSQL role to create and grant to. Single
+                  hyphens between other characters are allowed; such a name must be
+                  double-quoted in hand-written SQL.
                 minLength: 1
-                pattern: ^[a-z_][a-z0-9_]*$
+                pattern: ^[a-z_][a-z0-9_]*(-[a-z0-9_]+)*$
                 type: string
             required:
             - instance

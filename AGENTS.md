@@ -93,9 +93,16 @@ To cut a release: bump `version` and `appVersion` in
   all come from `make generate`; the chart's two are copied from `config/` by
   `hack/sync-chart.sh`. API field comments become the CRD descriptions, so a
   change to them needs `make generate` too.
-- Identifiers reaching SQL go through `ValidateIdent` then `QuoteIdent`.
-  PostgreSQL does not accept a parameter where an identifier is required, so
-  this is the only thing standing between a CRD field and injected SQL.
+- Identifiers reaching SQL go through `ValidateIdent` (or
+  `ValidateHyphenatedIdent`, for role and database names only) then
+  `QuoteIdent`. PostgreSQL does not accept a parameter where an identifier is
+  required, so this is the only thing standing between a CRD field and
+  injected SQL. Never put an identifier in an expression position: unquoted,
+  `a-b` parses as subtraction.
+- The naming rule: a name the controller accepts must, typed unquoted, either
+  mean the same object or fail to parse -- never name a different one. That is
+  why single hyphens are allowed in roles and databases (#27) while uppercase,
+  dots and `--` are not, and why schemas stay strict.
 - American English spelling.
 
 ## Architecture
@@ -126,10 +133,17 @@ repos.
 ## Adding an engine
 
 1. Implement `engine.Engine` in `internal/engine/<name>/`.
-2. Unit-test plan construction with a fake inspector.
-3. Add integration tests behind the `integration` build tag, against a real
+2. The engine owns its identifier validation and quoting: its own length
+   limits and quote function, with a fuzz test proving any input renders as
+   exactly one identifier (see `identifier_fuzz_test.go`). The CRD patterns
+   are only the floor every engine shares. MySQL in particular: users are
+   string literals (`'name'@'host'`), whose escaping depends on `sql_mode`,
+   and `_` and `%` are wildcards in database-level grants, so they need
+   escaping there.
+3. Unit-test plan construction with a fake inspector.
+4. Add integration tests behind the `integration` build tag, against a real
    server. Unit tests cannot tell you the DDL parses.
-4. Add the value to the `Engine` enum in `apis/db/v1alpha1` and the case to
+5. Add the value to the `Engine` enum in `apis/db/v1alpha1` and the case to
    `NewEngineFactory` in `internal/controller/databaseaccess/engine.go`.
 
 ## Testing

@@ -113,6 +113,33 @@ func TestValidateIdent(t *testing.T) {
 	}
 }
 
+func TestValidateHyphenatedIdent(t *testing.T) {
+	valid := []string{"app", "_leading", "trade-writer", "backend-service-xyz-dev", "a-b-c", "_x-1"}
+	for _, name := range valid {
+		if err := ValidateHyphenatedIdent("role", name); err != nil {
+			t.Errorf("ValidateHyphenatedIdent(%q) = %v, want nil", name, err)
+		}
+	}
+
+	invalid := map[string]string{
+		"empty":           "",
+		"uppercase":       "Trade-Writer",
+		"leading digit":   "1-role",
+		"embedded quote":  `ro"le-x`,
+		"statement break": "role-x; DROP DATABASE appdb",
+		"leading hyphen":  "-writer",
+		"trailing hyphen": "writer-",
+		"double hyphen":   "trade--writer",
+		"dot":             "trade.writer",
+		"over 63 bytes":   "a-23456789012345678901234567890123456789012345678901234567890123",
+	}
+	for why, name := range invalid {
+		if err := ValidateHyphenatedIdent("role", name); err == nil {
+			t.Errorf("ValidateHyphenatedIdent(%q) accepted a %s, want an error", name, why)
+		}
+	}
+}
+
 func TestQuoteIdent(t *testing.T) {
 	if got, want := QuoteIdent("app"), `"app"`; got != want {
 		t.Errorf("QuoteIdent = %q, want %q", got, want)

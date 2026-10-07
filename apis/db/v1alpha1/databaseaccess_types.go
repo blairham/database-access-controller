@@ -45,8 +45,12 @@ type InstanceRef struct {
 	// +optional
 	Port int32 `json:"port,omitempty"`
 
-	// Database is the database to connect to and grant CONNECT on.
+	// Database is the database to connect to and grant CONNECT on. Single
+	// hyphens between other characters are allowed; such a name must be
+	// double-quoted in hand-written SQL.
 	// +kubebuilder:default=appdb
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z_][a-z0-9_]*(-[a-z0-9_]+)*$`
 	// +optional
 	Database string `json:"database,omitempty"`
 
@@ -154,9 +158,11 @@ type DatabaseAccessSpec struct {
 	// Instance is the PostgreSQL instance to provision on.
 	Instance InstanceRef `json:"instance"`
 
-	// Role is the per-service PostgreSQL role to create and grant to.
+	// Role is the per-service PostgreSQL role to create and grant to. Single
+	// hyphens between other characters are allowed; such a name must be
+	// double-quoted in hand-written SQL.
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:Pattern=`^[a-z_][a-z0-9_]*$`
+	// +kubebuilder:validation:Pattern=`^[a-z_][a-z0-9_]*(-[a-z0-9_]+)*$`
 	Role string `json:"role"`
 
 	// GrantRdsIam grants rds_iam to Role so the service can authenticate with

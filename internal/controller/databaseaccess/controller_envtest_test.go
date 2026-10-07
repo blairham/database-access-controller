@@ -211,6 +211,42 @@ func TestCRDRejectsAnInjectedIdentifier(t *testing.T) {
 	}
 }
 
+// Hyphenated role and database names are admitted (#27), only singly between
+// other characters. Schemas stay strict.
+func TestCRDAdmitsHyphenatedRoleAndDatabase(t *testing.T) {
+	access := func(name, role, database, schema string) *dbv1alpha1.DatabaseAccess {
+		return &dbv1alpha1.DatabaseAccess{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: dbv1alpha1.DatabaseAccessSpec{
+				Instance: dbv1alpha1.InstanceRef{Endpoint: "db", Region: "us-east-1", Database: database},
+				Role:     role,
+				Grants:   []dbv1alpha1.SchemaGrant{{Schema: schema, Privileges: []string{"SELECT"}}},
+			},
+		}
+	}
+
+	ok := access("hyphenated", "backend-service-xyz", "backend-service-xyz-dev", "public")
+	if err := k8sClient.Create(context.Background(), ok); err != nil {
+		t.Fatalf("the API server rejected a hyphenated role and database: %v", err)
+	}
+	_ = k8sClient.Delete(context.Background(), ok)
+
+	for name, da := range map[string]*dbv1alpha1.DatabaseAccess{
+		"hyphenated schema":                access("hyphen-schema", "app_role", "appdb", "service-data"),
+		"role with a leading hyphen":       access("leading-hyphen-role", "-writer", "appdb", "app"),
+		"role with a trailing hyphen":      access("trailing-hyphen-role", "writer-", "appdb", "app"),
+		"role with a doubled hyphen":       access("double-hyphen-role", "trade--writer", "appdb", "app"),
+		"database with a doubled hyphen":   access("double-hyphen-db", "app_role", "app--db", "app"),
+		"database carrying a quote":        access("quote-db", "app_role", `app"db`, "app"),
+		"database name over 63 characters": access("long-db", "app_role", strings.Repeat("a", 64), "app"),
+	} {
+		if err := k8sClient.Create(context.Background(), da); err == nil {
+			_ = k8sClient.Delete(context.Background(), da)
+			t.Errorf("the API server accepted a %s", name)
+		}
+	}
+}
+
 func TestReconcileAppliesAndReportsReady(t *testing.T) {
 	f := &fakeEngine{}
 	startManager(t, f.factory())

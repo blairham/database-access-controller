@@ -281,6 +281,26 @@ func TestValidateRejectsInjectionInIdentifiers(t *testing.T) {
 	}
 }
 
+// Hyphens are for role and database names only (#27); a schema stays strict
+// because search_path and similar hand-written SQL most often leave it
+// unquoted.
+func TestValidateScopesHyphensToRoleAndDatabase(t *testing.T) {
+	e := New(nil, fakeInspector{}, nil)
+	ok := engine.Access{
+		Database:   "backend-service-xyz-dev",
+		Principal:  "backend-service-xyz",
+		Namespaces: []engine.Namespace{{Name: "public", Privileges: []string{"SELECT"}}},
+	}
+	if err := e.Validate(ok); err != nil {
+		t.Fatalf("Validate rejected a hyphenated role and database: %v", err)
+	}
+	bad := ok
+	bad.Namespaces = []engine.Namespace{{Name: "service-data", Privileges: []string{"SELECT"}}}
+	if err := e.Validate(bad); err == nil {
+		t.Error("Validate accepted a hyphenated schema, want an error")
+	}
+}
+
 func TestValidateRejectsDuplicateSchemas(t *testing.T) {
 	e := New(nil, fakeInspector{}, nil)
 	err := e.Validate(engine.Access{
