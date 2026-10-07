@@ -337,7 +337,7 @@ func (e *Engine) addOwnership(ctx context.Context, p *plan.Plan, principal, sche
 		return fmt.Errorf("enumerating relations in schema %q: %w", schema, err)
 	}
 	for _, r := range rels {
-		if err := ValidateIdent("relation", r.Name); err != nil {
+		if err := ValidateCatalogIdent("relation", r.Name); err != nil {
 			return fmt.Errorf("schema %q: %w", schema, err)
 		}
 		p.Add(&Statement{

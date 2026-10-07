@@ -98,7 +98,9 @@ To cut a release: bump `version` and `appVersion` in
   `QuoteIdent`. PostgreSQL does not accept a parameter where an identifier is
   required, so this is the only thing standing between a CRD field and
   injected SQL. Never put an identifier in an expression position: unquoted,
-  `a-b` parses as subtraction.
+  `a-b` parses as subtraction. A name read back from the catalog rather than
+  the spec (a relation under `ownerOf`) goes through `ValidateCatalogIdent`,
+  which checks length only (#30); never use it for a spec field.
 - The naming rule: a name the controller accepts must, typed unquoted, either
   mean the same object or fail to parse -- never name a different one. That is
   why single hyphens are allowed in roles and databases (#27) while uppercase,
