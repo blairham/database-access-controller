@@ -178,7 +178,11 @@ type DatabaseAccessSpec struct {
 	Grants []SchemaGrant `json:"grants,omitempty"`
 
 	// RevokeOnDelete revokes the grants when this resource is deleted. The role
-	// itself is never dropped.
+	// itself is never dropped. Revocation does not consult other resources: if
+	// another DatabaseAccess declares the same role on the same database, it
+	// loses the database grants, and any schema both name, until it next
+	// reconciles. The controller raises an OverlappingAccess warning event for
+	// that case; use one DatabaseAccess per role per database.
 	// +kubebuilder:default=false
 	// +optional
 	RevokeOnDelete bool `json:"revokeOnDelete,omitempty"`

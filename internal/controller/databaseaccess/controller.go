@@ -101,6 +101,7 @@ func (r *Reconciler) kit() *reconciler.Reconciler[*dbv1alpha1.DatabaseAccess] {
 		Name:     "databaseaccess",
 		New:      func() *dbv1alpha1.DatabaseAccess { return &dbv1alpha1.DatabaseAccess{} },
 		Open: func(ctx context.Context, da *dbv1alpha1.DatabaseAccess) (reconciler.Session, error) {
+			r.warnOverlaps(ctx, da)
 			eng, err := r.NewEngine(ctx, da)
 			if err != nil {
 				return nil, err
