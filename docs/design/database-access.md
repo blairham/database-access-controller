@@ -133,6 +133,16 @@ privileges were granted").
 is true. Revocation never drops the role: a role that owns objects cannot be
 dropped, and reassigning its objects is a human decision.
 
+Revocation is per resource and does not consult the others (#31). Two
+resources declaring the same role on the same database share the database
+grants (and the grants of any schema both name), so deleting one with
+`revokeOnDelete` withdraws what the other still declares until the survivor's
+next reconcile, up to the one-hour drift interval. The controller raises an
+`OverlappingAccess` Warning event on each side instead of guarding: an
+overlap-aware revoke would still miss two endpoints that reach one server (a
+cluster and an instance endpoint), and a guarantee that holds only sometimes is
+worse than a warning. The same role on different databases is unaffected.
+
 ## Testing
 
 - **Unit** tests build plans against a fake inspector.
