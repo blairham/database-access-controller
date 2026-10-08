@@ -1,4 +1,4 @@
-# database-controller
+# database-access-controller
 
 Provisions the role, schemas, grants and object ownership a service needs
 inside an RDS, Aurora or self-managed PostgreSQL database.
@@ -6,8 +6,8 @@ inside an RDS, Aurora or self-managed PostgreSQL database.
 ## Install
 
 ```sh
-helm install database-controller charts/database-controller \
-  --namespace database-controller-system --create-namespace \
+helm install database-access-controller charts/database-access-controller \
+  --namespace database-access-controller-system --create-namespace \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::<acct>:role/<role>
 ```
 
@@ -20,7 +20,7 @@ dbuser ARN.
 | Key | Default | Notes |
 |---|---|---|
 | `replicaCount` | `2` | Leader-elected, so the second is a standby |
-| `image.repository` | `ghcr.io/blairham/database-controller` | |
+| `image.repository` | `ghcr.io/blairham/database-access-controller` | |
 | `image.tag` | `""` | Falls back to `appVersion`; pin a digest where it matters |
 | `crds.install` | `true` | Installs the `DatabaseAccess` CRD |
 | `crds.keep` | `true` | Keeps the CRD on uninstall |
@@ -32,9 +32,9 @@ dbuser ARN.
 | `configureDefaultAffinity` | `true` | Soft anti-affinity across nodes |
 | `metrics.serviceMonitor.enabled` | `false` | Needs the Prometheus operator CRDs |
 | `prometheusRule.enabled` | `false` | Alerts on the per-resource metrics; needs the Prometheus operator CRDs |
-| `prometheusRule.rules.notReady` | `for: 15m`, `critical` | `database_controller_access_ready == 0` |
+| `prometheusRule.rules.notReady` | `for: 15m`, `critical` | `database_access_controller_access_ready == 0` |
 | `prometheusRule.rules.stale` | `7200s`, `for: 10m`, `warning` | Not planned against the database in two drift intervals (either mode) |
-| `prometheusRule.rules.notConverged` | off; `for: 2h`, `warning` | `database_controller_access_pending_statements > 0` |
+| `prometheusRule.rules.notConverged` | off; `for: 2h`, `warning` | `database_access_controller_access_pending_statements > 0` |
 | `autoscaling.enabled` | `false` | Leave off: only the leader reconciles |
 
 ### The CRD is in `templates/`, not `crds/`

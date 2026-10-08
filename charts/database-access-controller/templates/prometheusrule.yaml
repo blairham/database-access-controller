@@ -2,22 +2,22 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: {{ include "database-controller.fullname" . }}
+  name: {{ include "database-access-controller.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
     {{- with .Values.prometheusRule.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
   groups:
-    - name: database-controller
+    - name: database-access-controller
       rules:
         {{- with .Values.prometheusRule.rules.notReady }}
         {{- if .enabled }}
         # `max by` collapses the old leader's lingering series after a failover.
         - alert: DatabaseAccessNotReady
-          expr: max by (namespace, name) (database_controller_access_ready) == 0
+          expr: max by (namespace, name) (database_access_controller_access_ready) == 0
           for: {{ .for }}
           labels:
             severity: {{ .severity }}
@@ -34,7 +34,7 @@ spec:
         # The resource has stopped being reconciled. Keyed on last_planned
         # because Observe resources never apply.
         - alert: DatabaseAccessStale
-          expr: time() - max by (namespace, name) (database_controller_access_last_planned_timestamp_seconds) > {{ .thresholdSeconds }}
+          expr: time() - max by (namespace, name) (database_access_controller_access_last_planned_timestamp_seconds) > {{ .thresholdSeconds }}
           for: {{ .for }}
           labels:
             severity: {{ .severity }}
@@ -50,7 +50,7 @@ spec:
         # Pending statements that persist: a statement that keeps failing or
         # being undone, or an Observe resource not ready for cutover.
         - alert: DatabaseAccessNotConverged
-          expr: max by (namespace, name) (database_controller_access_pending_statements) > 0
+          expr: max by (namespace, name) (database_access_controller_access_pending_statements) > 0
           for: {{ .for }}
           labels:
             severity: {{ .severity }}

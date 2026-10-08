@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
 )
 
 // maxPending is the cap k8s-controller-kit puts on status.pending; the

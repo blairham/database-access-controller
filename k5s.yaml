@@ -9,7 +9,7 @@
 # The rig uses password auth, so it does not exercise the IAM path.
 apiVersion: k5s.dev/v1beta1
 kind: Stack
-name: database-controller
+name: database-access-controller
 context: kind-k8s
 
 services:

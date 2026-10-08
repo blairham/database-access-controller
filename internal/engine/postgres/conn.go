@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/blairham/database-controller/internal/rdsca"
+	"github.com/blairham/database-access-controller/internal/rdsca"
 )
 
 // rootCAs supplies the CAs a verify-ca or verify-full connection trusts. A

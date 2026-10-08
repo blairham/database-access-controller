@@ -1,4 +1,4 @@
-# database-controller: the manager and dbctl in one distroless, static,
+# database-access-controller: the manager and dbctl in one distroless, static,
 # non-root image. Base images are pinned by digest and pulled from AWS's public
 # mirror of Docker Hub (no anonymous rate limits). The build cross-compiles
 # rather than emulating the target.
@@ -16,9 +16,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # The distroless `nonroot` variant runs as uid 65532 and carries system CAs.
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS runtime
-LABEL org.opencontainers.image.title="database-controller" \
+LABEL org.opencontainers.image.title="database-access-controller" \
       org.opencontainers.image.description="Provisions roles, schemas and grants inside RDS and Aurora PostgreSQL" \
-      org.opencontainers.image.source="https://github.com/blairham/database-controller" \
+      org.opencontainers.image.source="https://github.com/blairham/database-access-controller" \
       org.opencontainers.image.licenses="Apache-2.0"
 USER 65532:65532
 ENTRYPOINT ["/manager"]

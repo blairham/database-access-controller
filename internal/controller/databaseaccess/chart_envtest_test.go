@@ -20,7 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
 )
 
 // The chart's CRD passes through Helm templating, so this installs the chart's
@@ -36,7 +36,7 @@ func TestChartRenderedCRDInstallsAndValidates(t *testing.T) {
 	}
 
 	out, err := exec.Command("helm", "template", "test",
-		filepath.Join(root, "charts", "database-controller"),
+		filepath.Join(root, "charts", "database-access-controller"),
 		"--show-only", "templates/crds.yaml").CombinedOutput()
 	if err != nil {
 		t.Fatalf("rendering the chart: %v\n%s", err, out)

@@ -1,4 +1,4 @@
-# AGENTS.md — database-controller
+# AGENTS.md — database-access-controller
 
 Guidance for AI coding agents working in this repo. `CLAUDE.md` imports it, and
 other tools read this file directly.
@@ -9,7 +9,7 @@ A Kubernetes controller that provisions the **data plane** of a PostgreSQL
 database: the role, schemas, grants and object ownership a service needs inside
 RDS, Aurora or a self-managed PostgreSQL.
 
-- Module: `github.com/blairham/database-controller`
+- Module: `github.com/blairham/database-access-controller`
 - Go 1.26, `controller-runtime` v0.25, `aws-sdk-go-v2`, `pgx/v5`,
   `hashicorp/cli`, [`k8s-controller-kit`](https://github.com/blairham/k8s-controller-kit)
 
@@ -41,7 +41,7 @@ internal/controller/             the DatabaseAccess API wired onto the kit's rec
 cmd/manager/                     the controller binary; --controllers selects which run
 cmd/dbctl/                       plan and apply from a terminal
 config/crd/, config/rbac/        generated manifests -- never hand-edit
-charts/database-controller/      the Helm chart; the install path
+charts/database-access-controller/      the Helm chart; the install path
 docs/design/                     why the design is shaped this way
 ```
 
@@ -58,18 +58,18 @@ alongside. Every action is pinned to a commit SHA with a `# vX.Y.Z` comment;
 Dependabot moves the pins.
 
 A **`v*` tag is what publishes**: `goreleaser.yml` runs GoReleaser, which
-pushes `ghcr.io/blairham/database-controller:<version>` (amd64 and arm64) and a
+pushes `ghcr.io/blairham/database-access-controller:<version>` (amd64 and arm64) and a
 `dbctl` archive per platform, signed with keyless cosign and carrying SLSA
 provenance (see `SECURITY.md`). A push to main only validates. The release
 refuses to publish when `Chart.yaml`'s `appVersion` does not match the tag.
 The same tag runs `chart.yml`, which pushes the chart to
-`oci://ghcr.io/blairham/charts/database-controller:<version>` and signs it; it
+`oci://ghcr.io/blairham/charts/database-access-controller:<version>` and signs it; it
 refuses unless both `version` and `appVersion` match the tag. It is its own
 workflow so an existing tag can be published alone:
 `gh workflow run chart.yml -f tag=vX.Y.Z`.
 
 To cut a release: bump `version` and `appVersion` in
-`charts/database-controller/Chart.yaml`, commit, then tag `vX.Y.Z` (signed).
+`charts/database-access-controller/Chart.yaml`, commit, then tag `vX.Y.Z` (signed).
 
 ## Code Conventions
 

@@ -9,7 +9,7 @@ import (
 
 	"github.com/blairham/k8s-controller-kit/plan"
 
-	"github.com/blairham/database-controller/internal/engine"
+	"github.com/blairham/database-access-controller/internal/engine"
 )
 
 // Engine provisions roles, schemas and grants on PostgreSQL, including RDS and

@@ -1,5 +1,5 @@
 # A service that owns its schema and runs its own migrations.
-apiVersion: database-controller.io/v1alpha1
+apiVersion: database-access-controller.io/v1alpha1
 kind: DatabaseAccess
 metadata:
   name: ingest

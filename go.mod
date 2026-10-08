@@ -1,4 +1,4 @@
-module github.com/blairham/database-controller
+module github.com/blairham/database-access-controller
 
 go 1.26.8
 

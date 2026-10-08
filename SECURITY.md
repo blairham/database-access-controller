@@ -1,15 +1,15 @@
 # Security Policy
 
-## What database-controller can do
+## What database-access-controller can do
 
-database-controller connects to a PostgreSQL database as an **administrative
+database-access-controller connects to a PostgreSQL database as an **administrative
 role** (`spec.instance.adminUser`) and runs DDL on behalf of every
 `DatabaseAccess` in the cluster: it creates roles, schemas and grants, and
 changes object ownership. Treat it accordingly:
 
 - **Whoever can create a `DatabaseAccess` can ask for privileges inside any
   database the controller can reach.** Grant `create` on
-  `databaseaccesses.database-controller.io` as you would grant the admin role
+  `databaseaccesses.database-access-controller.io` as you would grant the admin role
   itself, and use `--watch-namespace` to confine it.
 - With `auth.method: password`, the admin password Secret is read from the
   resource's **own** namespace, never from a namespace named in the reference.
@@ -38,7 +38,7 @@ Verify the signature, then the archives against it:
 ```sh
 VERSION=v0.0.1
 cosign verify-blob \
-  --certificate-identity "https://github.com/blairham/database-controller/.github/workflows/goreleaser.yml@refs/tags/$VERSION" \
+  --certificate-identity "https://github.com/blairham/database-access-controller/.github/workflows/goreleaser.yml@refs/tags/$VERSION" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --bundle checksums.txt.sigstore.json checksums.txt
 sha256sum --check --ignore-missing checksums.txt
@@ -50,26 +50,26 @@ in the release workflow and stored in the repository's attestations. Check an
 archive against it with the GitHub CLI:
 
 ```sh
-gh attestation verify dbctl_Linux_x86_64.tar.gz --repo blairham/database-controller
+gh attestation verify dbctl_Linux_x86_64.tar.gz --repo blairham/database-access-controller
 ```
 
 The same bundle is attached to the release as
-`database-controller-$VERSION.intoto.jsonl`, for checking offline:
+`database-access-controller-$VERSION.intoto.jsonl`, for checking offline:
 
 ```sh
-gh attestation verify dbctl_Linux_x86_64.tar.gz --repo blairham/database-controller \
-  --bundle "database-controller-$VERSION.intoto.jsonl"
+gh attestation verify dbctl_Linux_x86_64.tar.gz --repo blairham/database-access-controller \
+  --bundle "database-access-controller-$VERSION.intoto.jsonl"
 ```
 
-`v0.0.2` carries `database-controller.intoto.jsonl` instead, from
+`v0.0.2` carries `database-access-controller.intoto.jsonl` instead, from
 [slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator);
 check it with [slsa-verifier](https://github.com/slsa-framework/slsa-verifier).
 
 **Images.** Each published image is signed by digest:
 
 ```sh
-cosign verify ghcr.io/blairham/database-controller:0.0.1 \
-  --certificate-identity-regexp '^https://github\.com/blairham/database-controller/\.github/workflows/goreleaser\.yml@refs/tags/v' \
+cosign verify ghcr.io/blairham/database-access-controller:0.0.1 \
+  --certificate-identity-regexp '^https://github\.com/blairham/database-access-controller/\.github/workflows/goreleaser\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -78,14 +78,14 @@ in ghcr.io beside it and in the repository's attestations. The subject is the
 multi-arch index, so check it by tag (image tags carry no `v`):
 
 ```sh
-gh attestation verify oci://ghcr.io/blairham/database-controller:0.0.3 \
-  --repo blairham/database-controller
+gh attestation verify oci://ghcr.io/blairham/database-access-controller:0.0.3 \
+  --repo blairham/database-access-controller
 ```
 
 ## Reporting a vulnerability
 
 **Do not open a public issue.** Report it privately through GitHub:
-[Security → Report a vulnerability](https://github.com/blairham/database-controller/security/advisories/new).
+[Security → Report a vulnerability](https://github.com/blairham/database-access-controller/security/advisories/new).
 
 Please include the affected version or commit, what an attacker can do, and
 the steps to reproduce. You should receive a response within a week.

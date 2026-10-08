@@ -1,10 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "database-controller.fullname" . }}
+  name: {{ include "database-access-controller.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
   {{- with .Values.deploymentAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -20,11 +20,11 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "database-controller.selectorLabels" . | nindent 6 }}
+      {{- include "database-access-controller.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "database-controller.selectorLabels" . | nindent 8 }}
+        {{- include "database-access-controller.selectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -33,7 +33,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "database-controller.serviceAccountName" . }}
+      serviceAccountName: {{ include "database-access-controller.serviceAccountName" . }}
       {{- with .Values.runtimeClassName }}
       runtimeClassName: {{ . }}
       {{- end }}
@@ -111,7 +111,7 @@ spec:
         {{- toYaml .Values.affinity | nindent 8 }}
       {{- else if .Values.configureDefaultAffinity }}
       affinity:
-        {{- include "database-controller.defaultAffinity" . | nindent 8 }}
+        {{- include "database-access-controller.defaultAffinity" . | nindent 8 }}
       {{- end }}
       {{- with .Values.topologySpreadConstraints }}
       topologySpreadConstraints:
