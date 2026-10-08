@@ -15,7 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/blairham/database-controller/internal/engine"
+	"github.com/blairham/database-access-controller/internal/engine"
 )
 
 // This test checks that the engine leaves a database in the same state as an

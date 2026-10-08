@@ -2,7 +2,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: database-controller
+  name: database-access-controller
 rules:
 - apiGroups:
   - ""
@@ -20,7 +20,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - database-controller.io
+  - database-access-controller.io
   resources:
   - databaseaccesses
   verbs:
@@ -32,13 +32,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - database-controller.io
+  - database-access-controller.io
   resources:
   - databaseaccesses/finalizers
   verbs:
   - update
 - apiGroups:
-  - database-controller.io
+  - database-access-controller.io
   resources:
   - databaseaccesses/status
   verbs:

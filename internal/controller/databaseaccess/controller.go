@@ -20,14 +20,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
-	"github.com/blairham/database-controller/internal/engine"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
+	"github.com/blairham/database-access-controller/internal/engine"
 )
 
 const (
 	// finalizer keeps the resource around long enough to revoke, and is only
 	// added when the spec asks for revocation.
-	finalizer = "database-controller.io/revoke-on-delete"
+	finalizer = "database-access-controller.io/revoke-on-delete"
 
 	// ConditionReady reports whether the last reconcile applied cleanly.
 	ConditionReady = reconciler.ConditionReady
@@ -40,9 +40,9 @@ const (
 // accessMetrics are registered once per process: every Reconciler in it, including
 // one per envtest manager, reports into the same series. The names are the
 // ones the chart's PrometheusRule alerts on, such as
-// database_controller_access_ready.
+// database_access_controller_access_ready.
 var accessMetrics = reconciler.NewMetrics(ctrlmetrics.Registry, reconciler.MetricsConfig{
-	Prefix: "database_controller",
+	Prefix: "database_access_controller",
 	Kind:   "DatabaseAccess",
 	Noun:   "statement",
 })
@@ -61,9 +61,9 @@ type Reconciler struct {
 	Options controller.Options
 }
 
-// +kubebuilder:rbac:groups=database-controller.io,resources=databaseaccesses,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=database-controller.io,resources=databaseaccesses/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=database-controller.io,resources=databaseaccesses/finalizers,verbs=update
+// +kubebuilder:rbac:groups=database-access-controller.io,resources=databaseaccesses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=database-access-controller.io,resources=databaseaccesses/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=database-access-controller.io,resources=databaseaccesses/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 

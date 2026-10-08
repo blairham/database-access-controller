@@ -1,6 +1,6 @@
 GO ?= go
 BIN ?= bin
-IMG ?= database-controller:dev
+IMG ?= database-access-controller:dev
 PGTEST_DSN ?= postgres://postgres:test@127.0.0.1:5433/postgres
 
 .PHONY: all
@@ -10,24 +10,24 @@ all: generate fmt vet test build
 generate: ## Regenerate deepcopy, CRDs, RBAC, and sync them into the chart.
 	$(GO) tool controller-gen object:headerFile=hack/boilerplate.go.txt paths=./apis/...
 	$(GO) tool controller-gen crd paths=./apis/... output:crd:artifacts:config=config/crd
-	$(GO) tool controller-gen rbac:roleName=database-controller paths=./internal/... output:rbac:artifacts:config=config/rbac
+	$(GO) tool controller-gen rbac:roleName=database-access-controller paths=./internal/... output:rbac:artifacts:config=config/rbac
 	./hack/sync-chart.sh
 
 .PHONY: helm-lint
 helm-lint: ## Lint and render the chart, including with the toggles flipped.
-	helm lint charts/database-controller
-	helm template database-controller charts/database-controller >/dev/null
-	helm template database-controller charts/database-controller --set crds.install=false >/dev/null
-	helm template database-controller charts/database-controller --set rbac.create=false >/dev/null
-	helm template database-controller charts/database-controller --set autoscaling.enabled=true >/dev/null
-	helm template database-controller charts/database-controller --set podDisruptionBudget.maxUnavailable=1 >/dev/null
-	helm template database-controller charts/database-controller --set metrics.serviceMonitor.enabled=true >/dev/null
-	helm template database-controller charts/database-controller --set prometheusRule.enabled=true >/dev/null
+	helm lint charts/database-access-controller
+	helm template database-access-controller charts/database-access-controller >/dev/null
+	helm template database-access-controller charts/database-access-controller --set crds.install=false >/dev/null
+	helm template database-access-controller charts/database-access-controller --set rbac.create=false >/dev/null
+	helm template database-access-controller charts/database-access-controller --set autoscaling.enabled=true >/dev/null
+	helm template database-access-controller charts/database-access-controller --set podDisruptionBudget.maxUnavailable=1 >/dev/null
+	helm template database-access-controller charts/database-access-controller --set metrics.serviceMonitor.enabled=true >/dev/null
+	helm template database-access-controller charts/database-access-controller --set prometheusRule.enabled=true >/dev/null
 
 # Exactly the paths `generate` writes; the rest of the chart is hand-maintained.
 GENERATED_PATHS = config apis/db/v1alpha1/zz_generated.deepcopy.go \
-                  charts/database-controller/templates/crds.yaml \
-                  charts/database-controller/templates/rbac.yaml
+                  charts/database-access-controller/templates/crds.yaml \
+                  charts/database-access-controller/templates/rbac.yaml
 
 .PHONY: check-generated
 check-generated: generate ## Fail if the generated files are out of date.
@@ -68,13 +68,13 @@ build:
 # A unique tag per build: with a reused tag the Deployment spec does not change
 # (so nothing rolls) and `kind load` may keep the old image.
 RIG_TAG ?= dev-$(shell date +%s)
-RIG_IMG = database-controller:$(RIG_TAG)
+RIG_IMG = database-access-controller:$(RIG_TAG)
 
 # Extra values file for the rig release, e.g. a credential-agent sidecar for
 # testing IAM auth (see docs/design/database-access.md).
 RIG_VALUES ?=
 
-RIG_CONTEXT ?= k5s/database-controller
+RIG_CONTEXT ?= k5s/database-access-controller
 RIG_NAMESPACE ?= default
 KIND_CLUSTER ?= k8s
 
@@ -82,9 +82,9 @@ KIND_CLUSTER ?= k8s
 rig-install: ## Build, side-load and helm-install the controller into the k5s rig.
 	docker build -t $(RIG_IMG) .
 	kind load docker-image $(RIG_IMG) --name $(KIND_CLUSTER)
-	helm --kube-context $(RIG_CONTEXT) upgrade --install database-controller charts/database-controller \
+	helm --kube-context $(RIG_CONTEXT) upgrade --install database-access-controller charts/database-access-controller \
 	  --namespace $(RIG_NAMESPACE) \
-	  --set image.repository=database-controller \
+	  --set image.repository=database-access-controller \
 	  --set image.tag=$(RIG_TAG) \
 	  --set image.pullPolicy=IfNotPresent \
 	  --set replicaCount=1 \
@@ -92,7 +92,7 @@ rig-install: ## Build, side-load and helm-install the controller into the k5s ri
 	  --set logEncoder=console \
 	  $(if $(RIG_VALUES),-f $(RIG_VALUES)) \
 	  --wait --timeout 2m
-	kubectl --context $(RIG_CONTEXT) rollout status deploy/database-controller -n $(RIG_NAMESPACE) --timeout=2m
+	kubectl --context $(RIG_CONTEXT) rollout status deploy/database-access-controller -n $(RIG_NAMESPACE) --timeout=2m
 	@echo "running image: $(RIG_IMG)"
 
 .PHONY: rig-test

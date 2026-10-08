@@ -11,7 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
 )
 
 // ReasonOverlappingAccess is the Warning event raised when another resource

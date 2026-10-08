@@ -14,7 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/blairham/database-controller/internal/engine"
+	"github.com/blairham/database-access-controller/internal/engine"
 )
 
 // These tests run the generated statements against a real PostgreSQL server,

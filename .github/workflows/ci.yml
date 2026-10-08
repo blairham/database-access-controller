@@ -143,7 +143,7 @@ jobs:
         with:
           context: .
           push: false
-          tags: database-controller:ci
+          tags: database-access-controller:ci
 
   # Lints the chart and renders it with each toggle flipped.
   charts:

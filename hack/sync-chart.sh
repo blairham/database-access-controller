@@ -4,8 +4,8 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-chart="$root/charts/database-controller/templates"
-crd_src="$root/config/crd/database-controller.io_databaseaccesses.yaml"
+chart="$root/charts/database-access-controller/templates"
+crd_src="$root/config/crd/database-access-controller.io_databaseaccesses.yaml"
 rbac_src="$root/config/rbac/role.yaml"
 
 banner='{{/*
@@ -45,9 +45,9 @@ banner='{{/*
   echo 'apiVersion: rbac.authorization.k8s.io/v1'
   echo 'kind: ClusterRole'
   echo 'metadata:'
-  echo '  name: {{ include "database-controller.fullname" . }}'
+  echo '  name: {{ include "database-access-controller.fullname" . }}'
   echo '  labels:'
-  echo '    {{- include "database-controller.labels" . | nindent 4 }}'
+  echo '    {{- include "database-access-controller.labels" . | nindent 4 }}'
   # Everything from `rules:` down is generated verbatim.
   sed -n '/^rules:/,$p' "$rbac_src"
   cat <<'YAML'
@@ -55,16 +55,16 @@ banner='{{/*
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "database-controller.fullname" . }}
+  name: {{ include "database-access-controller.fullname" . }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "database-controller.fullname" . }}
+  name: {{ include "database-access-controller.fullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "database-controller.serviceAccountName" . }}
+    name: {{ include "database-access-controller.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- if .Values.enableLeaderElection }}
 ---
@@ -76,10 +76,10 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "database-controller.fullname" . }}-leader-election
+  name: {{ include "database-access-controller.fullname" . }}-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - coordination.k8s.io
@@ -95,17 +95,17 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "database-controller.fullname" . }}-leader-election
+  name: {{ include "database-access-controller.fullname" . }}-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "database-controller.fullname" . }}-leader-election
+  name: {{ include "database-access-controller.fullname" . }}-leader-election
 subjects:
   - kind: ServiceAccount
-    name: {{ include "database-controller.serviceAccountName" . }}
+    name: {{ include "database-access-controller.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}
 YAML

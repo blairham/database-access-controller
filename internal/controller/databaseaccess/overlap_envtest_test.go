@@ -13,7 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
 )
 
 func overlapEvents(t *testing.T, name string) int {

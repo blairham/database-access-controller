@@ -1,4 +1,4 @@
-database-controller — provisions roles, schemas and grants inside RDS and Aurora PostgreSQL
+database-access-controller — provisions roles, schemas and grants inside RDS and Aurora PostgreSQL
 Copyright 2026 Blair Hamilton
 
 This product is licensed under the Apache License, Version 2.0.

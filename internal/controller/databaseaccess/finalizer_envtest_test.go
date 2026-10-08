@@ -18,7 +18,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
 )
 
 const otherFinalizer = "example.com/other"

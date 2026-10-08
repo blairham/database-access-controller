@@ -1,8 +1,8 @@
 version: 2
 
-# GoReleaser configuration for database-controller
+# GoReleaser configuration for database-access-controller
 # See: https://goreleaser.com
-project_name: database-controller
+project_name: database-access-controller
 
 builds:
   # Linux only, and image only.
@@ -70,7 +70,7 @@ dockers_v2:
       - manager
       - dbctl
     images:
-      - ghcr.io/blairham/database-controller
+      - ghcr.io/blairham/database-access-controller
     dockerfile: Dockerfile
     flags:
       - --target=release
@@ -83,10 +83,10 @@ dockers_v2:
       - "{{ .Version }}"
       - "{{ if not .Prerelease }}latest{{ end }}"
     labels:
-      org.opencontainers.image.title: database-controller
+      org.opencontainers.image.title: database-access-controller
       org.opencontainers.image.description: Provisions roles, schemas and grants inside RDS and Aurora PostgreSQL
-      org.opencontainers.image.url: https://github.com/blairham/database-controller
-      org.opencontainers.image.source: https://github.com/blairham/database-controller
+      org.opencontainers.image.url: https://github.com/blairham/database-access-controller
+      org.opencontainers.image.source: https://github.com/blairham/database-access-controller
       org.opencontainers.image.licenses: Apache-2.0
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
@@ -143,4 +143,4 @@ release:
   prerelease: auto
   mode: replace
   footer: |
-    **Full Changelog**: https://github.com/blairham/database-controller/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full Changelog**: https://github.com/blairham/database-access-controller/compare/{{ .PreviousTag }}...{{ .Tag }}

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blairham/database-controller/internal/engine"
+	"github.com/blairham/database-access-controller/internal/engine"
 )
 
 // fakeInspector serves canned answers so plan construction can be tested

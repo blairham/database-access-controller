@@ -6,13 +6,13 @@ node drains.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "database-controller.fullname" . }}
+  name: {{ include "database-access-controller.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels:
-      {{- include "database-controller.selectorLabels" . | nindent 6 }}
+      {{- include "database-access-controller.selectorLabels" . | nindent 6 }}
   {{- toYaml .Values.podDisruptionBudget | nindent 2 }}
 {{- end }}

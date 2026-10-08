@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
 )
 
 func overlapAccess(name, endpoint, database, role string, revoke bool) dbv1alpha1.DatabaseAccess {

@@ -8,7 +8,7 @@ stringData:
   # Matches POSTGRES_PASSWORD in k5s.yaml.
   password: rigpassword
 ---
-apiVersion: database-controller.io/v1alpha1
+apiVersion: database-access-controller.io/v1alpha1
 kind: DatabaseAccess
 metadata:
   name: rig-app

@@ -6,9 +6,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "database-controller.fullname" . }}
+  name: {{ include "database-access-controller.fullname" . }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
 rules:
 - apiGroups:
   - ""
@@ -26,7 +26,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - database-controller.io
+  - database-access-controller.io
   resources:
   - databaseaccesses
   verbs:
@@ -38,13 +38,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - database-controller.io
+  - database-access-controller.io
   resources:
   - databaseaccesses/finalizers
   verbs:
   - update
 - apiGroups:
-  - database-controller.io
+  - database-access-controller.io
   resources:
   - databaseaccesses/status
   verbs:
@@ -55,16 +55,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "database-controller.fullname" . }}
+  name: {{ include "database-access-controller.fullname" . }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "database-controller.fullname" . }}
+  name: {{ include "database-access-controller.fullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "database-controller.serviceAccountName" . }}
+    name: {{ include "database-access-controller.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- if .Values.enableLeaderElection }}
 ---
@@ -76,10 +76,10 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "database-controller.fullname" . }}-leader-election
+  name: {{ include "database-access-controller.fullname" . }}-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - coordination.k8s.io
@@ -95,17 +95,17 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "database-controller.fullname" . }}-leader-election
+  name: {{ include "database-access-controller.fullname" . }}-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "database-controller.fullname" . }}-leader-election
+  name: {{ include "database-access-controller.fullname" . }}-leader-election
 subjects:
   - kind: ServiceAccount
-    name: {{ include "database-controller.serviceAccountName" . }}
+    name: {{ include "database-access-controller.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}
 {{- end }}

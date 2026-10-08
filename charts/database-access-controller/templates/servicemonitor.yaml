@@ -2,17 +2,17 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "database-controller.fullname" . }}
+  name: {{ include "database-access-controller.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "database-controller.labels" . | nindent 4 }}
+    {{- include "database-access-controller.labels" . | nindent 4 }}
     {{- with .Values.metrics.serviceMonitor.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
   selector:
     matchLabels:
-      {{- include "database-controller.selectorLabels" . | nindent 6 }}
+      {{- include "database-access-controller.selectorLabels" . | nindent 6 }}
   endpoints:
     - port: metrics
       interval: {{ .Values.metrics.serviceMonitor.interval }}

@@ -1,5 +1,5 @@
 name: Bug report
-description: Something database-controller did that it should not have
+description: Something database-access-controller did that it should not have
 labels: [bug]
 body:
   - type: markdown
@@ -13,7 +13,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: database-controller version or commit
+      label: database-access-controller version or commit
     validations:
       required: true
   - type: dropdown

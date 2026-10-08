@@ -1,5 +1,5 @@
 ---
-description: Build, vet, format-check and test database-controller.
+description: Build, vet, format-check and test database-access-controller.
 allowed-tools: Bash(go build:*), Bash(go vet:*), Bash(go tool gofumpt:*), Bash(go test:*), Bash(make check-generated)
 ---
 

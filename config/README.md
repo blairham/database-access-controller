@@ -1,7 +1,7 @@
 # config/
 
 Generated manifests. **Nothing here is an install path** — that is
-`charts/database-controller`.
+`charts/database-access-controller`.
 
 | Path | Produced by | Consumed by |
 |---|---|---|

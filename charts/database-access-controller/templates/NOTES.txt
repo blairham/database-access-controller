@@ -1,4 +1,4 @@
-{{ .Chart.Name }} {{ .Chart.AppVersion }} is installed as {{ include "database-controller.fullname" . }}.
+{{ .Chart.Name }} {{ .Chart.AppVersion }} is installed as {{ include "database-access-controller.fullname" . }}.
 
 Watching: {{ if .Values.watchNamespace }}namespace {{ .Values.watchNamespace }}{{ else }}all namespaces{{ end }}
 Replicas: {{ .Values.replicaCount }}{{ if .Values.enableLeaderElection }} (leader-elected){{ end }}
@@ -15,7 +15,7 @@ Replicas: {{ .Values.replicaCount }}{{ if .Values.enableLeaderElection }} (leade
 ⚠ NO ANNOTATIONS ON THE SERVICE ACCOUNT. The default admin auth is an RDS IAM
   token, minted from whatever AWS credentials the pod has. On EKS that comes
   from a Pod Identity Association or an IRSA role annotation on
-  {{ include "database-controller.serviceAccountName" . }}, and the role needs
+  {{ include "database-access-controller.serviceAccountName" . }}, and the role needs
   rds-db:connect on the admin user's dbuser ARN.
 
   Without it, connections fail at reconcile time rather than at install, and
@@ -26,7 +26,7 @@ Replicas: {{ .Values.replicaCount }}{{ if .Values.enableLeaderElection }} (leade
 
 Create access for a service:
 
-  apiVersion: database-controller.io/v1alpha1
+  apiVersion: database-access-controller.io/v1alpha1
   kind: DatabaseAccess
   metadata:
     name: my-service

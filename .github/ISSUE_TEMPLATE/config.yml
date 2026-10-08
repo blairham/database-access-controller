@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Report a vulnerability
-    url: https://github.com/blairham/database-controller/security/advisories/new
+    url: https://github.com/blairham/database-access-controller/security/advisories/new
     about: Privately, please — especially a CRD field that reaches SQL unquoted, or a grant wider than the spec asked for.

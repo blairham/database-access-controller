@@ -11,10 +11,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
-	"github.com/blairham/database-controller/internal/engine"
-	"github.com/blairham/database-controller/internal/engine/postgres"
-	"github.com/blairham/database-controller/internal/rdsauth"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
+	"github.com/blairham/database-access-controller/internal/engine"
+	"github.com/blairham/database-access-controller/internal/engine/postgres"
+	"github.com/blairham/database-access-controller/internal/rdsauth"
 )
 
 // EngineFactory opens an engine for one resource. It takes the whole object

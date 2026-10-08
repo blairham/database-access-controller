@@ -1,11 +1,11 @@
-# Default values for database-controller. Keys follow the
+# Default values for database-access-controller. Keys follow the
 # aws-load-balancer-controller chart.
 
 replicaCount: 2
 revisionHistoryLimit: 10
 
 image:
-  repository: ghcr.io/blairham/database-controller
+  repository: ghcr.io/blairham/database-access-controller
   # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
@@ -120,7 +120,7 @@ prometheusRule:
   enabled: false
   additionalLabels: {}
   rules:
-    # database_controller_access_ready == 0: the last reconcile failed.
+    # database_access_controller_access_ready == 0: the last reconcile failed.
     notReady:
       enabled: true
       for: 15m

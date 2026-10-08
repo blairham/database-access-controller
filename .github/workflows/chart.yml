@@ -1,6 +1,6 @@
 name: Publish chart
 
-# Publishes charts/database-controller to oci://ghcr.io/blairham/charts, so a
+# Publishes charts/database-access-controller to oci://ghcr.io/blairham/charts, so a
 # consumer can `helm install`/`helm template` a pinned version without cloning
 # the repository. The image is published by goreleaser.yml; this is the chart
 # that installs it.
@@ -45,7 +45,7 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          chart=charts/database-controller/Chart.yaml
+          chart=charts/database-access-controller/Chart.yaml
           version="$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$chart")"
           app="$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$chart")"
           if [ "$version" != "${TAG#v}" ] || [ "$app" != "${TAG#v}" ]; then
@@ -66,8 +66,8 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GH_ACTOR" --password-stdin
-          helm package charts/database-controller --destination "$RUNNER_TEMP/chart"
-          out="$(helm push "$RUNNER_TEMP/chart/database-controller-${TAG#v}.tgz" oci://ghcr.io/blairham/charts 2>&1)"
+          helm package charts/database-access-controller --destination "$RUNNER_TEMP/chart"
+          out="$(helm push "$RUNNER_TEMP/chart/database-access-controller-${TAG#v}.tgz" oci://ghcr.io/blairham/charts 2>&1)"
           echo "$out"
           digest="$(printf '%s\n' "$out" | sed -n 's/^Digest: *\(sha256:[0-9a-f]\{64\}\)$/\1/p')"
           if [ -z "$digest" ]; then
@@ -85,4 +85,4 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | cosign login ghcr.io --username "$GH_ACTOR" --password-stdin
-          cosign sign --yes "ghcr.io/blairham/charts/database-controller@${DIGEST}"
+          cosign sign --yes "ghcr.io/blairham/charts/database-access-controller@${DIGEST}"

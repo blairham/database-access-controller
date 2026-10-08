@@ -5,7 +5,7 @@
 // PostgreSQL role, schemas and grants a service needs.
 //
 // +kubebuilder:object:generate=true
-// +groupName=database-controller.io
+// +groupName=database-access-controller.io
 package v1alpha1
 
 import (
@@ -15,7 +15,7 @@ import (
 
 var (
 	// GroupVersion is the group and version for this API.
-	GroupVersion = schema.GroupVersion{Group: "database-controller.io", Version: "v1alpha1"}
+	GroupVersion = schema.GroupVersion{Group: "database-access-controller.io", Version: "v1alpha1"}
 
 	// SchemeBuilder registers this API's types with a runtime.Scheme.
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}

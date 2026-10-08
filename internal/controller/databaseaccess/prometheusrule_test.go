@@ -17,7 +17,7 @@ func renderRules(t *testing.T, sets ...string) string {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm is not on PATH")
 	}
-	chart, err := filepath.Abs(filepath.Join("..", "..", "..", "charts", "database-controller"))
+	chart, err := filepath.Abs(filepath.Join("..", "..", "..", "charts", "database-access-controller"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestStaleAlertKeysOnLastPlanned(t *testing.T) {
 	if expr == "" {
 		t.Fatal("DatabaseAccessStale is not rendered with prometheusRule.enabled=true")
 	}
-	if !strings.Contains(expr, "database_controller_access_last_planned_timestamp_seconds") {
+	if !strings.Contains(expr, "database_access_controller_access_last_planned_timestamp_seconds") {
 		t.Errorf("DatabaseAccessStale expr = %q, want it keyed on last_planned", expr)
 	}
 	if strings.Contains(expr, "last_applied") {
@@ -71,7 +71,7 @@ func TestNotConvergedAlertIsOptIn(t *testing.T) {
 		t.Errorf("DatabaseAccessNotConverged rendered by default (expr %q), want it off", expr)
 	}
 	expr := alertExpr(renderRules(t, "prometheusRule.rules.notConverged.enabled=true"), "DatabaseAccessNotConverged")
-	if !strings.Contains(expr, "database_controller_access_pending_statements") || !strings.Contains(expr, "> 0") {
+	if !strings.Contains(expr, "database_access_controller_access_pending_statements") || !strings.Contains(expr, "> 0") {
 		t.Errorf("DatabaseAccessNotConverged expr = %q, want pending_statements > 0", expr)
 	}
 }

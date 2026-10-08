@@ -15,8 +15,8 @@ import (
 
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
-	"github.com/blairham/database-controller/internal/engine"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
+	"github.com/blairham/database-access-controller/internal/engine"
 )
 
 // metricsRun makes resource names unique per run: the gauges are
@@ -31,11 +31,11 @@ func uniqueName(base string) string {
 // gauges belong to k8s-controller-kit's reconciler, so the tests read them
 // back from controller-runtime's registry, where it registers them.
 const (
-	readyGauge       = "database_controller_access_ready"
-	warningsGauge    = "database_controller_access_warnings"
-	lastAppliedGauge = "database_controller_access_last_applied_timestamp_seconds"
-	lastPlannedGauge = "database_controller_access_last_planned_timestamp_seconds"
-	pendingGauge     = "database_controller_access_pending_statements"
+	readyGauge       = "database_access_controller_access_ready"
+	warningsGauge    = "database_access_controller_access_warnings"
+	lastAppliedGauge = "database_access_controller_access_last_applied_timestamp_seconds"
+	lastPlannedGauge = "database_access_controller_access_last_planned_timestamp_seconds"
+	pendingGauge     = "database_access_controller_access_pending_statements"
 )
 
 // series reads one resource's value of a series, reporting whether the

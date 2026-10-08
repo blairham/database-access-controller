@@ -14,8 +14,8 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
-	"github.com/blairham/database-controller/internal/controller/databaseaccess"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
+	"github.com/blairham/database-access-controller/internal/controller/databaseaccess"
 )
 
 func main() {
@@ -27,7 +27,7 @@ func main() {
 	// fails while a CRD is missing all come from k8s-controller-kit.
 	err := manager.Main(manager.Config{
 		Scheme:           scheme,
-		LeaderElectionID: "database-controller.io",
+		LeaderElectionID: "database-access-controller.io",
 		Controllers: map[string]manager.Controller{
 			"databaseaccess": {
 				Watches: &dbv1alpha1.DatabaseAccess{},

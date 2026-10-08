@@ -1,9 +1,9 @@
-# database-controller
+# database-access-controller
 
-[![CI](https://github.com/blairham/database-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/blairham/database-controller/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/blairham/database-controller/actions/workflows/codeql.yml/badge.svg)](https://github.com/blairham/database-controller/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/blairham/database-controller/badge)](https://scorecard.dev/viewer/?uri=github.com/blairham/database-controller)
-[![Go version](https://img.shields.io/github/go-mod/go-version/blairham/database-controller)](go.mod)
+[![CI](https://github.com/blairham/database-access-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/blairham/database-access-controller/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/blairham/database-access-controller/actions/workflows/codeql.yml/badge.svg)](https://github.com/blairham/database-access-controller/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/blairham/database-access-controller/badge)](https://scorecard.dev/viewer/?uri=github.com/blairham/database-access-controller)
+[![Go version](https://img.shields.io/github/go-mod/go-version/blairham/database-access-controller)](go.mod)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 A Kubernetes controller that provisions the **data plane** of a PostgreSQL
@@ -35,7 +35,7 @@ schemas and grants.
 A `DatabaseAccess` declares what one service needs:
 
 ```yaml
-apiVersion: database-controller.io/v1alpha1
+apiVersion: database-access-controller.io/v1alpha1
 kind: DatabaseAccess
 metadata:
   name: ingest
@@ -117,15 +117,15 @@ Each release publishes the chart to `oci://ghcr.io/blairham/charts`, signed
 like the image, so a pinned version installs without a checkout:
 
 ```sh
-helm install database-controller oci://ghcr.io/blairham/charts/database-controller \
+helm install database-access-controller oci://ghcr.io/blairham/charts/database-access-controller \
   --version <version> \
-  --namespace database-controller-system --create-namespace \
+  --namespace database-access-controller-system --create-namespace \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::<acct>:role/<role>
 ```
 
 The annotation is for IRSA; with Pod Identity, associate the role with the
 ServiceAccount instead. See
-[the chart README](charts/database-controller/README.md) for values.
+[the chart README](charts/database-access-controller/README.md) for values.
 
 `k5s.yaml` brings up PostgreSQL plus the controller built from source in a kind
 cluster, to exercise the deployment itself (`make rig-install rig-test`). It
@@ -138,11 +138,11 @@ series per `DatabaseAccess`, labeled by `namespace` and `name` only:
 
 | Metric | Meaning |
 |---|---|
-| `database_controller_access_ready` | `1` when the last reconcile succeeded (applied in Enforce, planned in Observe), `0` when it failed |
-| `database_controller_access_warnings` | Best-effort statements skipped on the last apply (`status.warnings`); `0` in Observe |
-| `database_controller_access_pending_statements` | Statements the database still needs (`status.pendingStatements`); `0` means converged |
-| `database_controller_access_last_planned_timestamp_seconds` | Unix time the database was last planned against (`status.lastPlannedTime`), in either mode |
-| `database_controller_access_last_applied_timestamp_seconds` | Unix time of the last successful apply; never moves in Observe |
+| `database_access_controller_access_ready` | `1` when the last reconcile succeeded (applied in Enforce, planned in Observe), `0` when it failed |
+| `database_access_controller_access_warnings` | Best-effort statements skipped on the last apply (`status.warnings`); `0` in Observe |
+| `database_access_controller_access_pending_statements` | Statements the database still needs (`status.pendingStatements`); `0` means converged |
+| `database_access_controller_access_last_planned_timestamp_seconds` | Unix time the database was last planned against (`status.lastPlannedTime`), in either mode |
+| `database_access_controller_access_last_applied_timestamp_seconds` | Unix time of the last successful apply; never moves in Observe |
 
 Series are removed when the resource is deleted. The failure reason is on the
 resource (`kubectl describe databaseaccess`), not a label.
@@ -198,7 +198,7 @@ internal/rdsca/                  embedded RDS CA bundle
 internal/controller/             the DatabaseAccess API wired onto k8s-controller-kit
 cmd/manager/                     the controller binary
 cmd/dbctl/                       plan and apply from a terminal
-charts/database-controller/      the Helm chart
+charts/database-access-controller/      the Helm chart
 ```
 
 [docs/design/database-access.md](docs/design/database-access.md) explains the

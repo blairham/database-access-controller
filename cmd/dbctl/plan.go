@@ -13,11 +13,11 @@ import (
 	"github.com/blairham/k8s-controller-kit/plan"
 	"sigs.k8s.io/yaml"
 
-	dbv1alpha1 "github.com/blairham/database-controller/apis/db/v1alpha1"
-	"github.com/blairham/database-controller/internal/controller/databaseaccess"
-	"github.com/blairham/database-controller/internal/engine"
-	"github.com/blairham/database-controller/internal/engine/postgres"
-	"github.com/blairham/database-controller/internal/rdsauth"
+	dbv1alpha1 "github.com/blairham/database-access-controller/apis/db/v1alpha1"
+	"github.com/blairham/database-access-controller/internal/controller/databaseaccess"
+	"github.com/blairham/database-access-controller/internal/engine"
+	"github.com/blairham/database-access-controller/internal/engine/postgres"
+	"github.com/blairham/database-access-controller/internal/rdsauth"
 )
 
 // loadAccess reads a DatabaseAccess manifest from a file or stdin.

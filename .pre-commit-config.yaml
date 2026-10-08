@@ -1,4 +1,4 @@
-# Pre-commit configuration for database-controller.
+# Pre-commit configuration for database-access-controller.
 # Install: pre-commit install
 # Run:     pre-commit run --all-files
 # Update:  pre-commit autoupdate

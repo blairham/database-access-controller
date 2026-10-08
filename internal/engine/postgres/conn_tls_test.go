@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blairham/database-controller/internal/rdsca"
+	"github.com/blairham/database-access-controller/internal/rdsca"
 )
 
 // testCA is a throwaway certificate authority.

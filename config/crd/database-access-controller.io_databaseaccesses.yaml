@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.22.0
-  name: databaseaccesses.database-controller.io
+  name: databaseaccesses.database-access-controller.io
 spec:
-  group: database-controller.io
+  group: database-access-controller.io
   names:
     kind: DatabaseAccess
     listKind: DatabaseAccessList
