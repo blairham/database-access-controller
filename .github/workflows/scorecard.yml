@@ -13,6 +13,9 @@ on:
     - cron: '17 6 * * 1'
   push:
     branches: [main]
+  # GitHub dropped the push events for a while after the repo was renamed,
+  # leaving the badge with no result under the new name until Monday's cron.
+  workflow_dispatch:
 
 permissions: read-all
 
