@@ -65,7 +65,8 @@ test (ubuntu-latest)** (build, `check-generated`, vet across all build tags,
 `go test -race`, envtest), and **CI / Fuzz** on main and weekly. The `Image`
 job calls `go-image.yml` (**Image / Build image**). **PostgreSQL integration**
 (a PostgreSQL 16 service container) and **Helm chart** are this repo's own
-jobs, `needs: ci`, with their steps gated on its `code` output. `codeql.yml`
+jobs, `needs: changes` (a `go-changes.yml` call at the same pin, so they need
+not wait for all of go-ci), with their steps gated on its `code` output. `codeql.yml`
 (**Analyze**) and `scorecard.yml` run alongside. Every action and reusable
 workflow is pinned to a commit SHA with a `# vX.Y.Z` comment; Dependabot moves
 the pins.
