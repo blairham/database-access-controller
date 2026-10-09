@@ -14,6 +14,11 @@ generated notes when this file was started. v0.0.1 to v0.0.6 were published as
 
 ## [Unreleased]
 
+### Security
+
+- Built with Go 1.26.9 and golang.org/x/net v0.60.0, which fix
+  GO-2026-6603 to GO-2026-6617 in HTTP/2 and TLS. (#41)
+
 ### Changed
 
 - CI and release run blairham/.github's shared workflows. Release signatures
