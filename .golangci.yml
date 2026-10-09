@@ -1,6 +1,11 @@
 # golangci-lint v2 configuration for database-access-controller.
 # See: https://golangci-lint.run/usage/configuration/
 #
+# Rendered from blairham/.github baseline/golangci.yml.tmpl by `make sync`.
+# Edit the baseline (or, with a reason, the override file
+# overrides/database-access-controller.yml), not this file: the weekly drift check
+# reports any difference.
+#
 # golangci-lint is pinned twice and the two must move together: go.mod's `tool`
 # block (`go tool golangci-lint`) and the hook `rev` in .pre-commit-config.yaml.
 
@@ -27,7 +32,7 @@ linters:
   enable:
     # Core linters (enabled by default)
     - errcheck # Check for unchecked errors
-    - govet # Suspicious constructs, incl. shadow + fieldalignment (see settings)
+    - govet # Suspicious constructs; the analyzers are in settings
     - ineffassign # Detect ineffectual assignments
     - staticcheck # The staticcheck rule set
     - unused # Check for unused constants, variables, functions and types

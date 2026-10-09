@@ -47,29 +47,48 @@ docs/design/                     why the design is shaped this way
 
 ## CI/CD
 
-`.github/workflows/ci.yml` holds everything that gates a merge. Jobs (their
-names are the required checks): **Pre-commit** (the hooks below, via
-`blairham/go-pre-commit`), **Detect changed files** (skips the code jobs for
-prose-only PRs without leaving a required check pending), **Build and test**
-(build, `check-generated`, vet across all build tags, `go test -race`,
-envtest), **PostgreSQL integration** (a PostgreSQL 16 service container),
-**Build image** and **Helm chart**. `codeql.yml` and `scorecard.yml` run
-alongside. Every action is pinned to a commit SHA with a `# vX.Y.Z` comment;
-Dependabot moves the pins.
+**Shared baseline.** CI, release and the synced config files come from
+[blairham/.github](https://github.com/blairham/.github).
+`.golangci.yml`, `.editorconfig`, `.pre-commit-config.yaml`, `.yamllint.yml`,
+`.gitleaks.toml`, `.github/dependabot.yml`, `.github/CODEOWNERS`,
+`scorecard.yml` and `codeql.yml` are rendered there by
+`make sync REPO=database-access-controller DIR=<checkout>`: change them in
+blairham/.github (a departure is an approved entry in its
+`overrides/database-access-controller.yml`), not here, or the weekly drift
+check reports it.
 
-A **`v*` tag is what publishes**: `goreleaser.yml` runs GoReleaser, which
-pushes `ghcr.io/blairham/database-access-controller:<version>` (amd64 and arm64) and a
-`dbctl` archive per platform, signed with keyless cosign and carrying SLSA
-provenance (see `SECURITY.md`). A push to main only validates. The release
-refuses to publish when `Chart.yaml`'s `appVersion` does not match the tag.
-The same tag runs `chart.yml`, which pushes the chart to
-`oci://ghcr.io/blairham/charts/database-access-controller:<version>` and signs it; it
-refuses unless both `version` and `appVersion` match the tag. It is its own
-workflow so an existing tag can be published alone:
+`.github/workflows/ci.yml` holds everything that gates a merge. Its `CI` job
+calls blairham/.github's `go-ci.yml`: **CI / Pre-commit** (the hooks below,
+diff-scoped), **CI / Detect changed files** (skips the code jobs for
+prose-only PRs without leaving a required check pending), **CI / Build and
+test (ubuntu-latest)** (build, `check-generated`, vet across all build tags,
+`go test -race`, envtest), and **CI / Fuzz** on main and weekly. The `Image`
+job calls `go-image.yml` (**Image / Build image**). **PostgreSQL integration**
+(a PostgreSQL 16 service container) and **Helm chart** are this repo's own
+jobs, `needs: ci`, with their steps gated on its `code` output. `codeql.yml`
+(**Analyze**) and `scorecard.yml` run alongside. Every action and reusable
+workflow is pinned to a commit SHA with a `# vX.Y.Z` comment; Dependabot moves
+the pins.
+
+A **`v*` tag is what publishes**: `release.yml` calls blairham/.github's
+`go-release.yml`, which runs GoReleaser to push
+`ghcr.io/blairham/database-access-controller:<version>` (amd64 and arm64) and
+a `dbctl` archive per platform, signed with keyless cosign and carrying SLSA
+provenance (see `SECURITY.md`). The release notes are the tag's section of
+`CHANGELOG.md`, and the release fails without one. A push to main only
+validates. The release refuses to publish when `Chart.yaml`'s `appVersion`
+does not match the tag. `gh workflow run release.yml -f dry-run=true` is a
+snapshot build that publishes nothing. The same tag runs `chart.yml`
+(`go-chart.yml`), which pushes the chart to
+`oci://ghcr.io/blairham/charts/database-access-controller:<version>` and signs
+it; it refuses unless both `version` and `appVersion` match the tag. It is its
+own workflow so an existing tag can be published alone:
 `gh workflow run chart.yml -f tag=vX.Y.Z`.
 
-To cut a release: bump `version` and `appVersion` in
-`charts/database-access-controller/Chart.yaml`, commit, then tag `vX.Y.Z` (signed).
+To cut a release: move `CHANGELOG.md`'s `[Unreleased]` entries under
+`## [X.Y.Z] - <date>`, bump `version` and `appVersion` in
+`charts/database-access-controller/Chart.yaml`, commit, then tag `vX.Y.Z`
+(signed).
 
 ## Code Conventions
 
