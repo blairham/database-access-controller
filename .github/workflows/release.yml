@@ -1,0 +1,55 @@
+name: Release
+
+# A v* tag publishes: blairham/.github's go-release.yml runs GoReleaser, which
+# pushes ghcr.io/blairham/database-access-controller:<version> (amd64 and
+# arm64) and a dbctl archive per platform, then signs checksums.txt keylessly
+# and attests build provenance for the archives and for the image's
+# multi-arch index digest (as GoReleaser recorded it in dist/artifacts.json).
+# The release notes are the tag's section of CHANGELOG.md, and the release
+# refuses to publish when the chart's appVersion does not match the tag. The
+# signing identity is go-release.yml itself; SECURITY.md shows how to verify
+# it. The chart is published by chart.yml, on the same tag.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.0.0). Must already exist. Leave empty for a dry run."
+        required: false
+        type: string
+      dry-run:
+        description: "Build with GoReleaser --snapshot; publish, sign and attest nothing."
+        required: false
+        type: boolean
+        default: false
+
+# Read-only by default; the release job asks for exactly what it writes.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release
+    permissions:
+      contents: write # the GitHub release and its assets
+      packages: write # the image on ghcr.io
+      # Keyless cosign and the provenance attestations both sign with the
+      # workflow's OIDC identity.
+      id-token: write
+      attestations: write # store the provenance in the repository's attestations
+    uses: blairham/.github/.github/workflows/go-release.yml@99060d62d0693570a360127ab698307d276630da # v0.0.0
+    with:
+      tag: ${{ inputs.tag }}
+      snapshot: ${{ inputs.dry-run == true }}
+      images: '["ghcr.io/blairham/database-access-controller"]'
+      # An unset image.tag falls back to appVersion, so a stale chart would
+      # install the previous binary.
+      charts: '["charts/database-access-controller"]'
+    secrets:
+      MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}

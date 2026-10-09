@@ -1,4 +1,8 @@
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Rendered from blairham/.github baseline/dependabot.yml.tmpl by `make sync`.
+# Groups are derived from go.mod: a group appears when the module requires
+# something it covers. The docker ecosystem appears when there is a Dockerfile.
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -9,13 +13,16 @@ updates:
     groups:
       # aws-sdk-go-v2 releases its modules together; one PR, not six.
       aws-sdk:
-        patterns: ["github.com/aws/aws-sdk-go-v2*"]
-      # client-go, api and apimachinery must move in lockstep with each other
-      # and with controller-runtime; split, they fail to build.
+        patterns:
+          - "github.com/aws/aws-sdk-go-v2*"
+      # client-go, api and apimachinery move in lockstep with each other and
+      # with controller-runtime; split, they fail to build.
       kubernetes:
         patterns:
           - "k8s.io/*"
           - "sigs.k8s.io/*"
+  # Bumps the SHA pins and their `# vX.Y.Z` comments together, including the
+  # pin on blairham/.github's reusable workflows.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -26,12 +33,13 @@ updates:
       interval: monthly
     ignore:
       # A Go minor bump moves go.mod and .tool-versions by hand, not as a lone
-      # Dockerfile bump. The mirror path makes the name docker/library/golang.
+      # Dockerfile bump. Digest and patch updates still come through.
       - dependency-name: docker/library/golang
         update-types:
           - version-update:semver-major
           - version-update:semver-minor
-      # Stay on the PostgreSQL major CI's integration suite uses.
+      # Stay on the PostgreSQL major CI's integration suite uses; a major bump
+      # needs tested migration support first.
       - dependency-name: docker/library/postgres
         update-types:
           - version-update:semver-major
