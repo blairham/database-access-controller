@@ -4,9 +4,10 @@ name: CI
 # changed files, Build and test, Fuzz — are blairham/.github's go-ci.yml,
 # shared with every Go repository there; their checks report as
 # `CI / <job>`. The image build is its go-image.yml (`Image / Build image`).
-# Repository-specific jobs go below, `needs: ci`, with their steps gated on
-# `needs.ci.outputs.code == 'true'` (never a job-level `if:` or a `paths:`
-# filter: a required check that never runs is pending forever).
+# Repository-specific jobs go below, `needs: changes` (go-changes.yml, so
+# they need not wait for all of go-ci), with their steps gated on
+# `needs.changes.outputs.code == 'true'` (never a job-level `if:` or a
+# `paths:` filter: a required check that never runs is pending forever).
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -28,7 +29,7 @@ concurrency:
 jobs:
   ci:
     name: CI
-    uses: blairham/.github/.github/workflows/go-ci.yml@99060d62d0693570a360127ab698307d276630da # v0.0.0
+    uses: blairham/.github/.github/workflows/go-ci.yml@9711060ad4860f35860bcbf90d90f103617082d2 # v0.0.1
     with:
       # Both binaries, then the generated files (deepcopy, CRDs, RBAC and the
       # chart's copies) must match what `make generate` writes, and vet must
@@ -40,9 +41,13 @@ jobs:
       # envtest downloads a kube-apiserver and etcd; no cluster, no Docker.
       test-command: go test -race ./... && make test-envtest
 
+  changes:
+    name: Changes
+    uses: blairham/.github/.github/workflows/go-changes.yml@9711060ad4860f35860bcbf90d90f103617082d2 # v0.0.1
+
   integration:
     name: PostgreSQL integration
-    needs: ci
+    needs: changes
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -58,15 +63,15 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.ci.outputs.code == 'true'
+        if: needs.changes.outputs.code == 'true'
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: needs.ci.outputs.code == 'true'
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
           check-latest: true
           cache: true
       - name: Run the generated SQL against PostgreSQL 16
-        if: needs.ci.outputs.code == 'true'
+        if: needs.changes.outputs.code == 'true'
         env:
           PGTEST_DSN: postgres://postgres:test@127.0.0.1:5433/postgres
         run: go test -race -tags integration ./internal/engine/postgres/ -v
@@ -74,21 +79,21 @@ jobs:
   # Build only; a v* tag publishes (release.yml).
   image:
     name: Image
-    needs: ci
-    uses: blairham/.github/.github/workflows/go-image.yml@99060d62d0693570a360127ab698307d276630da # v0.0.0
+    needs: changes
+    uses: blairham/.github/.github/workflows/go-image.yml@9711060ad4860f35860bcbf90d90f103617082d2 # v0.0.1
     with:
-      run: ${{ needs.ci.outputs.code == 'true' }}
+      run: ${{ needs.changes.outputs.code == 'true' }}
 
   # Lints the chart and renders it with each toggle flipped.
   charts:
     name: Helm chart
-    needs: ci
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.ci.outputs.code == 'true'
+        if: needs.changes.outputs.code == 'true'
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        if: needs.ci.outputs.code == 'true'
+        if: needs.changes.outputs.code == 'true'
       - name: Lint and render
-        if: needs.ci.outputs.code == 'true'
+        if: needs.changes.outputs.code == 'true'
         run: make helm-lint
