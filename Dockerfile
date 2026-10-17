@@ -1,8 +1,7 @@
 # database-access-controller: the manager and dbctl in one distroless, static,
-# non-root image, with the gated shell (cmd/sh) at /bin/sh. Base images are
-# pinned by digest and pulled from AWS's public mirror of Docker Hub (no
-# anonymous rate limits). The build cross-compiles rather than emulating the
-# target.
+# non-root image. Base images are pinned by digest and pulled from AWS's public
+# mirror of Docker Hub (no anonymous rate limits). The build cross-compiles
+# rather than emulating the target.
 FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26-alpine@sha256:c95332c2af86b6d89b91bd0500f4b9529ccbd090a0d1855c6d1ceaa142ae8615 AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
@@ -13,9 +12,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/manager ./cmd/manager && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/dbctl ./cmd/dbctl && \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/sh ./cmd/sh
+    go build -trimpath -ldflags="-s -w" -o /out/dbctl ./cmd/dbctl
 
 # The distroless `nonroot` variant runs as uid 65532 and carries system CAs.
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS runtime
@@ -32,13 +29,8 @@ FROM runtime AS release
 ARG TARGETOS TARGETARCH
 COPY ${TARGETOS}/${TARGETARCH}/manager /manager
 COPY ${TARGETOS}/${TARGETARCH}/dbctl /dbctl
-# /bin/sh is a gated shell, not a general one: no exec, no signals, no writes,
-# reads bounded to /proc and /sys/fs/cgroup. Safe only because this image has
-# no other userland. See github.com/blairham/sh/blob/main/gated/README.md.
-COPY ${TARGETOS}/${TARGETARCH}/sh /bin/sh
 
 # Default (last, so a bare `docker build .` gets it): built from source.
 FROM runtime
 COPY --from=build /out/manager /manager
 COPY --from=build /out/dbctl /dbctl
-COPY --from=build /out/sh /bin/sh
