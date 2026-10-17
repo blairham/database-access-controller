@@ -131,23 +131,6 @@ ServiceAccount instead. See
 cluster, to exercise the deployment itself (`make rig-install rig-test`). It
 uses password auth, so it does not cover the IAM path.
 
-### Looking inside a pod
-
-The image is distroless, and its `/bin/sh` is blairham/sh's
-[gated shell](https://github.com/blairham/sh/blob/main/gated/README.md): it
-cannot exec, signal or write anything, reads only `/proc` and
-`/sys/fs/cgroup`, and refuses `/proc/*/environ`. Builtins and globbing are
-the whole toolkit:
-
-```sh
-# ps, with no ps
-kubectl exec <pod> -- /bin/sh -c 'for d in /proc/[0-9]*; do read -r c < "$d/comm"; echo "${d#/proc/} $c"; done'
-```
-
-Refusals are listed on stderr, since a refused read and an empty one look the
-same on stdout. The chart uses HTTP probes only; an `exec` probe or lifecycle
-hook would hit this shell and fail.
-
 ## Metrics and alerts
 
 Beyond controller-runtime's own reconcile counters, the leader exports one
