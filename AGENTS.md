@@ -40,6 +40,7 @@ internal/rdsca/                  embedded RDS CA bundle (hack/update-rds-ca.sh r
 internal/controller/             the DatabaseAccess API wired onto the kit's reconciler
 cmd/manager/                     the controller binary; --controllers selects which run
 cmd/dbctl/                       plan and apply from a terminal
+cmd/sh/                          the image's /bin/sh: blairham/sh's gated shell (no exec)
 config/crd/, config/rbac/        generated manifests -- never hand-edit
 charts/database-access-controller/      the Helm chart; the install path
 docs/design/                     why the design is shaped this way
