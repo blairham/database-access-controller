@@ -37,6 +37,23 @@ builds:
     ldflags:
       - -s -w
 
+  # /bin/sh for the image only: the gated shell (cmd/sh). Linux only, and in
+  # no archive -- it exists to be copied into the container.
+  - id: sh
+    binary: sh
+    main: ./cmd/sh
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
 archives:
   - id: dbctl
     ids:
@@ -69,6 +86,7 @@ dockers_v2:
     ids:
       - manager
       - dbctl
+      - sh
     images:
       - ghcr.io/blairham/database-access-controller
     dockerfile: Dockerfile

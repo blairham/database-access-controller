@@ -14,6 +14,12 @@ generated notes when this file was started. v0.0.1 to v0.0.6 were published as
 
 ## [Unreleased]
 
+### Added
+
+- The image's `/bin/sh` is blairham/sh's gated shell, so
+  `kubectl exec <pod> -- /bin/sh -c '<script>'` can read `/proc` and
+  `/sys/fs/cgroup`. It cannot exec, signal or write. (#46)
+
 ### Security
 
 - Built with Go 1.26.9 and golang.org/x/net v0.60.0, which fix
