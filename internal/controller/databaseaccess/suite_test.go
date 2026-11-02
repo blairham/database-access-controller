@@ -105,7 +105,7 @@ func startManager(t *testing.T, factory EngineFactory) {
 	r := &Reconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
-		Recorder:  mgr.GetEventRecorderFor("databaseaccess-test"),
+		Recorder:  mgr.GetEventRecorder("databaseaccess-test"),
 		NewEngine: factory,
 		// Each test runs its own manager in the same process, and
 		// controller-runtime requires controller names to be unique per

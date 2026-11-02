@@ -14,7 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -85,7 +85,7 @@ func reconcileOnce(t *testing.T, f *fakeEngine, rc *racingClient, name string) e
 	r := &Reconciler{
 		Client:    rc,
 		Scheme:    testSch,
-		Recorder:  record.NewFakeRecorder(100),
+		Recorder:  events.NewFakeRecorder(100),
 		NewEngine: f.factory(),
 	}
 	_, err := r.Reconcile(context.Background(), ctrl.Request{

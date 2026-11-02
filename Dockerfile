@@ -2,7 +2,7 @@
 # non-root image. Base images are pinned by digest and pulled from AWS's public
 # mirror of Docker Hub (no anonymous rate limits). The build cross-compiles
 # rather than emulating the target.
-FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26-alpine@sha256:c95332c2af86b6d89b91bd0500f4b9529ccbd090a0d1855c6d1ceaa142ae8615 AS build
+FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26-alpine@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY . .

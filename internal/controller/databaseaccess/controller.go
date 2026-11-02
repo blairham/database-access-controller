@@ -14,7 +14,7 @@ import (
 	"github.com/blairham/k8s-controller-kit/plan"
 	"github.com/blairham/k8s-controller-kit/reconciler"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -51,7 +51,7 @@ var accessMetrics = reconciler.NewMetrics(ctrlmetrics.Registry, reconciler.Metri
 type Reconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 
 	// NewEngine opens the engine for a resource.
 	NewEngine EngineFactory
@@ -65,6 +65,7 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=database-access-controller.io,resources=databaseaccesses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=database-access-controller.io,resources=databaseaccesses/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile brings the database in line with the resource.

@@ -13,18 +13,19 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
-  - ""
-  resources:
   - secrets
   verbs:
   - get
   - list
   - watch
+- apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 - apiGroups:
   - database-access-controller.io
   resources:
