@@ -32,13 +32,10 @@ func main() {
 			"databaseaccess": {
 				Watches: &dbv1alpha1.DatabaseAccess{},
 				Setup: func(mgr ctrl.Manager) error {
-					// The kit's Reconciler takes the old-API recorder until
-					// blairham/k8s-controller-kit#6.
-					recorder := mgr.GetEventRecorderFor("databaseaccess") //nolint:staticcheck // kit#6
 					return (&databaseaccess.Reconciler{
 						Client:    mgr.GetClient(),
 						Scheme:    mgr.GetScheme(),
-						Recorder:  recorder,
+						Recorder:  mgr.GetEventRecorder("databaseaccess"),
 						NewEngine: databaseaccess.NewEngineFactory(mgr.GetClient()),
 					}).SetupWithManager(mgr)
 				},

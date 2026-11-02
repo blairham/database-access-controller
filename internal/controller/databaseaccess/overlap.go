@@ -84,6 +84,6 @@ func (r *Reconciler) warnOverlaps(ctx context.Context, da *dbv1alpha1.DatabaseAc
 		return
 	}
 	for _, msg := range overlaps(da, all.Items) {
-		r.Recorder.Event(da, corev1.EventTypeWarning, ReasonOverlappingAccess, msg)
+		r.Recorder.Eventf(da, nil, corev1.EventTypeWarning, ReasonOverlappingAccess, "Reconcile", "%s", msg)
 	}
 }
