@@ -10,7 +10,7 @@ database: the role, schemas, grants and object ownership a service needs inside
 RDS, Aurora or a self-managed PostgreSQL.
 
 - Module: `github.com/blairham/database-access-controller`
-- Go 1.26, `controller-runtime` v0.25, `aws-sdk-go-v2`, `pgx/v5`,
+- Go 1.27, `controller-runtime` v0.25, `aws-sdk-go-v2`, `pgx/v5`,
   `hashicorp/cli`, [`k8s-controller-kit`](https://github.com/blairham/k8s-controller-kit)
 
 ## Quick Reference
